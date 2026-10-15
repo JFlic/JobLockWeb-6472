@@ -1,0 +1,172 @@
+/* The font import must come first: `@import "tailwindcss"` is expanded inline,
+   so anything after it lands mid-stylesheet and CSS drops a late @import. */
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap");
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: "Poppins", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Poppins", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Menlo", monospace;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Job Lock brand */
+  --color-ink: #0b1220;
+  --color-navy: #132542;
+  --color-surface: #f5f8fd;
+  --color-sky-1: #6fa8f0;
+  --color-sky-2: #bedafa;
+  --color-sky-3: #dcebfc;
+  --color-mint: #0f9d76;
+  --color-amber: #d9820a;
+
+  --color-chart-1: #1d4ed8;
+  --color-chart-2: #0f9d76;
+  --color-chart-3: #d9820a;
+  --color-chart-4: #7fb3f5;
+  --color-chart-5: #132542;
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  --radius: 0.75rem;
+  --background: #ffffff;
+  --foreground: #16203a;
+  --card: #ffffff;
+  --card-foreground: #16203a;
+  --popover: #ffffff;
+  --popover-foreground: #16203a;
+  --primary: #1d4ed8;
+  --primary-foreground: #ffffff;
+  --secondary: #f5f8fd;
+  --secondary-foreground: #16203a;
+  --muted: #f5f8fd;
+  --muted-foreground: #5b6b87;
+  --accent: #eaf2fe;
+  --accent-foreground: #13398f;
+  --destructive: #d63b3b;
+  --border: #e2e8f2;
+  --input: #dfe6f2;
+  --ring: #1d4ed8;
+
+  --sidebar: #0b1220;
+  --sidebar-foreground: #c6d3e8;
+  --sidebar-primary: #1d4ed8;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #16223c;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #1c2942;
+  --sidebar-ring: #1d4ed8;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/40;
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
+}
+
+@layer components {
+  /* Sky gradient hero, layered with soft cloud blooms. */
+  .hero-sky {
+    background:
+      radial-gradient(60% 40% at 18% 22%, rgba(255, 255, 255, 0.65), transparent 70%),
+      radial-gradient(48% 34% at 82% 12%, rgba(255, 255, 255, 0.5), transparent 70%),
+      radial-gradient(70% 50% at 50% 88%, rgba(255, 255, 255, 0.9), transparent 72%),
+      linear-gradient(180deg, #6fa8f0 0%, #bedafa 52%, #ffffff 100%);
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+
+  .jl-card {
+    @apply rounded-[14px] border border-border bg-card;
+    transition:
+      transform 0.18s ease,
+      box-shadow 0.18s ease,
+      border-color 0.18s ease;
+  }
+  .jl-card-hover:hover {
+    transform: translateY(-2px);
+    border-color: #cfdcf2;
+    box-shadow: 0 8px 24px -12px rgba(15, 35, 75, 0.22);
+  }
+
+  .jl-pill {
+    font-family: var(--font-mono);
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Thin scrollbars inside kanban columns and dialogs. */
+.jl-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.jl-scroll::-webkit-scrollbar-thumb {
+  background: #d6e0ef;
+  border-radius: 999px;
+}
+.jl-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
