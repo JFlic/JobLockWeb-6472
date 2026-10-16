@@ -46,7 +46,7 @@ Auth:
 App (authenticated, shared sidebar shell):
 - **Job Board** (`pages/board.tsx`) — search, filter row (level, location, remote, sponsorship, posted), "Just added" section, job cards with company mark, meta row, `+ Track` and `Score my resume` actions.
 - **Tracker** (`pages/tracker.tsx`) — stats header (applied this week, streak, response rate), five-column kanban (Saved, Applied, Interviewing, Offer, Rejected) with drag-and-drop, add-manual-application dialog, usage/limit banner on Free.
-- **Resume** (`pages/resume.tsx`) — upload PDF, saved resume preview, score panel (0–100 ring, missing keywords, three bullet rewrites), tailoring side-by-side diff with per-bullet approve.
+- **Resume** (`pages/resume.tsx`) — upload .docx or PDF, saved resume preview, experience notes (extra true facts, importable from old cover letters), target a board job or a pasted posting, score panel (0–100 ring, missing keywords, three bullet rewrites), tailoring side-by-side diff with per-bullet approve plus an editable cover letter, Word downloads of both (a .docx upload keeps its own formatting), and a history of tailored applications. Board and tracker cards deep-link here with `Tailor`.
 
 ## Components
 

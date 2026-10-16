@@ -11,7 +11,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { ExternalLink, Flame, Plus, Sparkles, Trash2, TrendingUp } from "lucide-react";
+import { ExternalLink, Flame, Plus, Sparkles, Trash2, TrendingUp, Wand2 } from "lucide-react";
 import { AppShell } from "../components/app-shell";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -40,6 +40,7 @@ const COLUMNS: { id: AppStatus; label: string; tone: string }[] = [
 
 type Row = {
   id: number;
+  jobId: number | null;
   status: string;
   title: string;
   company: string;
@@ -107,6 +108,17 @@ function Card({
             Open <ExternalLink className="size-3" />
           </a>
         ) : null}
+        <Link
+          href={`/resume?${new URLSearchParams({
+            ...(row.jobId ? { jobId: String(row.jobId) } : {}),
+            title: row.title,
+            company: row.company,
+          })}`}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="inline-flex items-center gap-1 rounded-[7px] px-1.5 py-1 text-[11.5px] font-semibold text-primary transition hover:bg-accent"
+        >
+          Tailor <Wand2 className="size-3" />
+        </Link>
         {onRemove ? (
           <button
             type="button"

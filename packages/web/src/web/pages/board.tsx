@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Search,
   Sparkles,
+  Wand2,
   X,
 } from "lucide-react";
 import { AppShell } from "../components/app-shell";
@@ -351,6 +352,19 @@ export default function BoardPage() {
                         >
                           <Sparkles className="size-3.5" />
                           Score my resume
+                        </Button>
+
+                        <Button size="sm" variant="outline" asChild className="rounded-[9px] font-semibold">
+                          <Link
+                            href={`/resume?${new URLSearchParams({
+                              jobId: String(job.id),
+                              title: job.title,
+                              company: job.companyName,
+                            })}`}
+                          >
+                            <Wand2 className="size-3.5" />
+                            Tailor
+                          </Link>
                         </Button>
 
                         <a

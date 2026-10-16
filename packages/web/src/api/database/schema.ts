@@ -119,6 +119,9 @@ export const resumeScores = sqliteTable(
       .notNull()
       .references(() => resumes.id, { onDelete: "cascade" }),
     jobId: integer("job_id").references(() => jobs.id, { onDelete: "set null" }),
+    /** Set when the run was against a pasted posting instead of a board job. */
+    customCompany: text("custom_company"),
+    customTitle: text("custom_title"),
     score: integer("score").notNull(),
     /** JSON string[] */
     missingKeywords: text("missing_keywords").notNull().default("[]"),
@@ -142,16 +145,33 @@ export const resumeTailors = sqliteTable(
       .notNull()
       .references(() => resumes.id, { onDelete: "cascade" }),
     jobId: integer("job_id").references(() => jobs.id, { onDelete: "set null" }),
+    /** Set when the run was against a pasted posting instead of a board job. */
+    customCompany: text("custom_company"),
+    customTitle: text("custom_title"),
     /** JSON { section, original, tailored, rationale }[] */
     changes: text("changes").notNull().default("[]"),
     /** JSON number[] of approved change indexes */
     approved: text("approved").notNull().default("[]"),
+    /** Plain text, paragraphs separated by blank lines. User edits overwrite it. */
+    coverLetter: text("cover_letter").notNull().default(""),
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
       .$defaultFn(() => new Date()),
   },
   (t) => [index("resume_tailors_user_idx").on(t.userId)],
 );
+
+/**
+ * Extra true facts about the user — projects, courses, certifications, old
+ * cover-letter paragraphs — that the AI may draw on alongside the resume.
+ */
+export const experienceBanks = sqliteTable("experience_banks", {
+  userId: text("user_id").primaryKey(),
+  content: text("content").notNull().default(""),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
 
 /** Waitlist / digest email capture from the marketing site. */
 export const waitlist = sqliteTable(

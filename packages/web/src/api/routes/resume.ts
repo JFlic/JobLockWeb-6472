@@ -11,12 +11,34 @@ import * as schema from "../database/schema";
 import { s3 } from "../lib/s3";
 import { gateway, RESUME_MODEL } from "../agent/gateway";
 import { FEATURES, featureBalance, requireFeature, trackFeature } from "../lib/billing";
+import {
+  DOCX_TYPE,
+  applyChangesToDocx,
+  applyChangesToText,
+  buildDocx,
+  extractDocxText,
+} from "../lib/docx";
 
 const TRUTH_RULE = dedent`
   Hard rule: never invent experience, employers, dates, metrics, degrees, or skills.
-  Work only with facts already present in the resume text. If a job asks for
-  something the candidate does not have, say so in the gaps instead of fabricating it.
+  Work only with facts already present in the resume text or the candidate's own
+  experience notes. If a job asks for something the candidate does not have, say so
+  in the gaps instead of fabricating it.
 `;
+
+const UPLOAD_TYPES = ["application/pdf", DOCX_TYPE];
+
+/** Either a posting from the board or one the user pasted from elsewhere. */
+const jobInput = {
+  jobId: z.number().int().optional(),
+  custom: z
+    .object({
+      company: z.string().trim().min(1).max(120),
+      title: z.string().trim().min(1).max(160),
+      description: z.string().trim().min(80, "Paste the full job description.").max(20000),
+    })
+    .optional(),
+};
 
 /**
  * These schemas are deliberately permissive on length and array size. The model
@@ -47,7 +69,10 @@ const tailorSchema = z.object({
       rationale: z.string(),
     }),
   ),
+  coverLetter: z.string(),
 });
+
+type Change = z.infer<typeof tailorSchema>["changes"][number];
 
 /** Trims a string to `max` characters on a word boundary where possible. */
 function trim(value: string, max: number) {
@@ -76,13 +101,39 @@ function clampScore(object: z.infer<typeof scoreSchema>) {
 
 function clampTailor(object: z.infer<typeof tailorSchema>) {
   return {
-    changes: object.changes.slice(0, 8).map((c) => ({
+    // Originals are not trimmed: export matches them verbatim against the resume.
+    changes: object.changes.slice(0, 10).map((c) => ({
       section: trim(c.section, 80),
-      original: trim(c.original, 600),
+      original: c.original.trim().slice(0, 1200),
       tailored: trim(c.tailored, 600),
       rationale: trim(c.rationale, 300),
     })),
+    coverLetter: object.coverLetter.trim().slice(0, 6000),
   };
+}
+
+async function loadBank(userId: string) {
+  const [row] = await db
+    .select({ content: schema.experienceBanks.content })
+    .from(schema.experienceBanks)
+    .where(eq(schema.experienceBanks.userId, userId));
+  return row?.content ?? "";
+}
+
+async function readObject(key: string) {
+  const object = await s3.send(new GetObjectCommand({ Bucket: process.env.S3_BUCKET, Key: key }));
+  return object.Body!.transformToByteArray();
+}
+
+async function extractPdfText(bytes: Uint8Array) {
+  const { extractText, getDocumentProxy } = await import("unpdf");
+  const pdf = await getDocumentProxy(new Uint8Array(bytes));
+  const extracted = await extractText(pdf, { mergePages: true });
+  return Array.isArray(extracted.text) ? extracted.text.join("\n") : extracted.text;
+}
+
+function safeName(value: string) {
+  return value.replace(/[^a-zA-Z0-9 _-]/g, "").trim().replace(/\s+/g, "_").slice(0, 60) || "Job";
 }
 
 async function loadResume(userId: string, resumeId?: number) {
@@ -108,7 +159,43 @@ async function loadResume(userId: string, resumeId?: number) {
   return resume;
 }
 
-async function loadJobContext(jobId: number) {
+type JobContext = {
+  id: number | null;
+  title: string;
+  location: string | null;
+  level: string;
+  description: string | null;
+  summary: string | null;
+  companyName: string;
+};
+
+async function resolveJob(input: { jobId?: number; custom?: { company: string; title: string; description: string } }): Promise<JobContext> {
+  if (input.jobId !== undefined) return loadJobContext(input.jobId);
+  if (input.custom) {
+    return {
+      id: null,
+      title: input.custom.title,
+      location: null,
+      level: "unspecified",
+      description: input.custom.description,
+      summary: null,
+      companyName: input.custom.company,
+    };
+  }
+  throw new ORPCError("BAD_REQUEST", { message: "Pick a posting or paste a job description." });
+}
+
+function bankBlock(bank: string) {
+  return bank.trim()
+    ? dedent`
+        CANDIDATE'S OWN EXPERIENCE NOTES (true facts written by the candidate —
+        projects, coursework, certifications, past cover-letter paragraphs)
+        ${bank.slice(0, 12000)}
+      `
+    : "";
+}
+
+async function loadJobContext(jobId: number): Promise<JobContext> {
   const [job] = await db
     .select({
       id: schema.jobs.id,
@@ -131,8 +218,8 @@ export const resume = {
   presign: authed
     .input(z.object({ filename: z.string().max(200), contentType: z.string().max(100) }))
     .handler(async ({ input, context }) => {
-      if (input.contentType !== "application/pdf") {
-        throw new ORPCError("BAD_REQUEST", { message: "Upload a PDF." });
+      if (!UPLOAD_TYPES.includes(input.contentType)) {
+        throw new ORPCError("BAD_REQUEST", { message: "Upload a PDF or Word (.docx) file." });
       }
       const safe = input.filename.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80);
       const key = `resumes/${context.user.id}/${Date.now()}-${safe}`;
@@ -156,19 +243,14 @@ export const resume = {
         throw new ORPCError("FORBIDDEN", { message: "Invalid upload key." });
       }
 
-      const object = await s3.send(
-        new GetObjectCommand({ Bucket: process.env.S3_BUCKET, Key: input.key }),
-      );
-      const bytes = await object.Body!.transformToByteArray();
+      const bytes = await readObject(input.key);
+      const isDocx = input.key.toLowerCase().endsWith(".docx");
 
       let text = "";
       try {
-        const { extractText, getDocumentProxy } = await import("unpdf");
-        const pdf = await getDocumentProxy(new Uint8Array(bytes));
-        const extracted = await extractText(pdf, { mergePages: true });
-        text = Array.isArray(extracted.text) ? extracted.text.join("\n") : extracted.text;
+        text = isDocx ? await extractDocxText(bytes) : await extractPdfText(bytes);
       } catch (e) {
-        console.error("[resume] pdf extraction failed:", e);
+        console.error("[resume] text extraction failed:", e);
       }
 
       const [row] = await db
@@ -230,14 +312,15 @@ export const resume = {
 
   /** AI match score against one job. Metered. */
   score: authed
-    .input(z.object({ jobId: z.number().int(), resumeId: z.number().int().optional() }))
+    .input(z.object({ ...jobInput, resumeId: z.number().int().optional() }))
     .handler(async ({ input, context }) => {
       const userId = context.user.id;
       await requireFeature(userId, FEATURES.resumeScore);
 
-      const [resumeRow, job] = await Promise.all([
+      const [resumeRow, job, bank] = await Promise.all([
         loadResume(userId, input.resumeId),
-        loadJobContext(input.jobId),
+        resolveJob(input),
+        loadBank(userId),
       ]);
 
       const { object } = await generateObject({
@@ -267,6 +350,8 @@ export const resume = {
 
           RESUME
           ${resumeRow.extractedText.slice(0, 12000)}
+
+          ${bankBlock(bank)}
         `,
       });
 
@@ -278,6 +363,8 @@ export const resume = {
           userId,
           resumeId: resumeRow.id,
           jobId: job.id,
+          customCompany: job.id === null ? job.companyName : null,
+          customTitle: job.id === null ? job.title : null,
           score: result.score,
           verdict: result.verdict,
           missingKeywords: JSON.stringify(result.missingKeywords),
@@ -300,31 +387,46 @@ export const resume = {
       };
     }),
 
-  /** AI tailoring — rewrites existing bullets for one job. Metered. */
+  /** AI tailoring — rewrites existing bullets and drafts a cover letter for one job. Metered. */
   tailor: authed
-    .input(z.object({ jobId: z.number().int(), resumeId: z.number().int().optional() }))
+    .input(z.object({ ...jobInput, resumeId: z.number().int().optional() }))
     .handler(async ({ input, context }) => {
       const userId = context.user.id;
       await requireFeature(userId, FEATURES.resumeTailor);
 
-      const [resumeRow, job] = await Promise.all([
+      const [resumeRow, job, bank] = await Promise.all([
         loadResume(userId, input.resumeId),
-        loadJobContext(input.jobId),
+        resolveJob(input),
+        loadBank(userId),
       ]);
 
       const { object } = await generateObject({
         model: gateway(RESUME_MODEL),
         schema: tailorSchema,
         system: dedent`
-          You tailor an existing resume to one specific job posting for a new-grad or
-          junior software engineer.
+          You tailor an existing resume and write a matching cover letter for one
+          specific job posting, for a new-grad or junior candidate.
 
           ${TRUTH_RULE}
 
-          Rewrite real bullets so the candidate's genuine work reads in the language
-          the posting uses. Lead with action verbs, keep any real metrics, and stay
-          within one line each. Return between three and six changes, each quoting the
-          original line verbatim in "original".
+          RESUME CHANGES
+          Rewrite real lines so the candidate's genuine work reads in the language the
+          posting uses. Only rewrite bullet points and the professional summary — never
+          names, contact lines, section headings, job titles, schools, or dates.
+          Lead with action verbs, keep any real metrics, and keep bullets to one line.
+          You may reword a bullet to surface a skill from the experience notes only when
+          the notes say that skill was used in that same role or project.
+          Return between four and eight changes. "original" must copy one full line of
+          the resume exactly, character for character, so it can be found and replaced.
+          "section" is the resume heading or role the line sits under.
+
+          COVER LETTER
+          Plain text, 250-380 words, paragraphs separated by one blank line. Open with
+          "Dear ${job.companyName} Hiring Team,". Three or four body paragraphs: why this
+          role and company, then the two or three most relevant real experiences (prefer
+          specifics from the experience notes and resume), then a short close. Sign off
+          with "Sincerely," then the candidate's name. Confident, warm, specific — no
+          clichés, no claims the materials don't support, no placeholders.
         `,
         prompt: dedent`
           JOB
@@ -334,8 +436,12 @@ export const resume = {
           Job description:
           ${(job.description ?? job.summary ?? "").slice(0, 8000)}
 
+          CANDIDATE NAME: ${context.user.name ?? "the candidate"}
+
           RESUME
           ${resumeRow.extractedText.slice(0, 12000)}
+
+          ${bankBlock(bank)}
         `,
       });
 
@@ -347,7 +453,11 @@ export const resume = {
           userId,
           resumeId: resumeRow.id,
           jobId: job.id,
+          customCompany: job.id === null ? job.companyName : null,
+          customTitle: job.id === null ? job.title : null,
           changes: JSON.stringify(result.changes),
+          approved: JSON.stringify(result.changes.map((_, i) => i)),
+          coverLetter: result.coverLetter,
         })
         .returning();
 
@@ -359,23 +469,175 @@ export const resume = {
         jobTitle: job.title,
         companyName: job.companyName,
         changes: result.changes,
+        approved: result.changes.map((_, i) => i),
+        coverLetter: result.coverLetter,
         createdAt: saved!.createdAt,
       };
     }),
 
-  /** Approve a subset of tailoring changes (kept for export/record). */
-  approveChanges: authed
-    .input(z.object({ id: z.number().int(), approved: z.array(z.number().int()).max(20) }))
+  /** Save which changes to keep and the (possibly hand-edited) cover letter. */
+  saveTailor: authed
+    .input(
+      z.object({
+        id: z.number().int(),
+        approved: z.array(z.number().int()).max(20),
+        coverLetter: z.string().max(10000).optional(),
+      }),
+    )
     .handler(async ({ input, context }) => {
       const [row] = await db
         .update(schema.resumeTailors)
-        .set({ approved: JSON.stringify(input.approved) })
+        .set({
+          approved: JSON.stringify(input.approved),
+          ...(input.coverLetter !== undefined ? { coverLetter: input.coverLetter } : {}),
+        })
         .where(
           and(eq(schema.resumeTailors.id, input.id), eq(schema.resumeTailors.userId, context.user.id)),
         )
         .returning();
       if (!row) throw new ORPCError("NOT_FOUND", { message: "Tailoring run not found." });
       return { ok: true };
+    }),
+
+  /** Past tailoring runs, newest first — one per job applied to. */
+  tailorHistory: authed.handler(async ({ context }) => {
+    const rows = await db
+      .select({
+        id: schema.resumeTailors.id,
+        jobId: schema.resumeTailors.jobId,
+        customCompany: schema.resumeTailors.customCompany,
+        customTitle: schema.resumeTailors.customTitle,
+        changes: schema.resumeTailors.changes,
+        approved: schema.resumeTailors.approved,
+        coverLetter: schema.resumeTailors.coverLetter,
+        createdAt: schema.resumeTailors.createdAt,
+        jobTitle: schema.jobs.title,
+        companyName: schema.companies.name,
+      })
+      .from(schema.resumeTailors)
+      .leftJoin(schema.jobs, eq(schema.resumeTailors.jobId, schema.jobs.id))
+      .leftJoin(schema.companies, eq(schema.jobs.companyId, schema.companies.id))
+      .where(eq(schema.resumeTailors.userId, context.user.id))
+      .orderBy(desc(schema.resumeTailors.createdAt))
+      .limit(30);
+
+    return rows.map((r) => ({
+      id: r.id,
+      jobId: r.jobId,
+      jobTitle: r.jobTitle ?? r.customTitle ?? "Removed posting",
+      companyName: r.companyName ?? r.customCompany ?? "—",
+      changes: JSON.parse(r.changes) as Change[],
+      approved: JSON.parse(r.approved) as number[],
+      coverLetter: r.coverLetter,
+      createdAt: r.createdAt,
+    }));
+  }),
+
+  /**
+   * The tailored resume as a .docx. Word uploads keep their original formatting
+   * with approved lines swapped in place; PDF uploads become a clean text .docx.
+   */
+  exportResume: authed.input(z.object({ id: z.number().int() })).handler(async ({ input, context }) => {
+    const [run] = await db
+      .select({
+        changes: schema.resumeTailors.changes,
+        approved: schema.resumeTailors.approved,
+        fileKey: schema.resumes.fileKey,
+        filename: schema.resumes.filename,
+        extractedText: schema.resumes.extractedText,
+        customCompany: schema.resumeTailors.customCompany,
+        companyName: schema.companies.name,
+      })
+      .from(schema.resumeTailors)
+      .innerJoin(schema.resumes, eq(schema.resumeTailors.resumeId, schema.resumes.id))
+      .leftJoin(schema.jobs, eq(schema.resumeTailors.jobId, schema.jobs.id))
+      .leftJoin(schema.companies, eq(schema.jobs.companyId, schema.companies.id))
+      .where(and(eq(schema.resumeTailors.id, input.id), eq(schema.resumeTailors.userId, context.user.id)));
+    if (!run) throw new ORPCError("NOT_FOUND", { message: "Tailoring run not found." });
+
+    const approved = new Set(JSON.parse(run.approved) as number[]);
+    const changes = (JSON.parse(run.changes) as Change[]).filter((_, i) => approved.has(i));
+    const base = run.filename.replace(/\.(pdf|docx)$/i, "");
+    const name = `${safeName(base)}_${safeName(run.companyName ?? run.customCompany ?? "Job")}.docx`;
+
+    let bytes: Uint8Array;
+    let missed: { original: string; tailored: string }[];
+    if (run.fileKey.toLowerCase().endsWith(".docx")) {
+      ({ bytes, missed } = await applyChangesToDocx(await readObject(run.fileKey), changes));
+    } else {
+      const result = applyChangesToText(run.extractedText, changes);
+      bytes = await buildDocx(result.text.split("\n"));
+      missed = result.missed;
+    }
+
+    return {
+      file: new File([bytes], name, { type: DOCX_TYPE }),
+      missed: missed.map(({ original, tailored }) => ({ original, tailored })),
+    };
+  }),
+
+  /** The run's cover letter as a .docx. */
+  exportCoverLetter: authed.input(z.object({ id: z.number().int() })).handler(async ({ input, context }) => {
+    const [run] = await db
+      .select({
+        coverLetter: schema.resumeTailors.coverLetter,
+        customCompany: schema.resumeTailors.customCompany,
+        companyName: schema.companies.name,
+      })
+      .from(schema.resumeTailors)
+      .leftJoin(schema.jobs, eq(schema.resumeTailors.jobId, schema.jobs.id))
+      .leftJoin(schema.companies, eq(schema.jobs.companyId, schema.companies.id))
+      .where(and(eq(schema.resumeTailors.id, input.id), eq(schema.resumeTailors.userId, context.user.id)));
+    if (!run) throw new ORPCError("NOT_FOUND", { message: "Tailoring run not found." });
+    if (!run.coverLetter.trim()) {
+      throw new ORPCError("BAD_REQUEST", { message: "This run has no cover letter." });
+    }
+
+    const paragraphs = run.coverLetter.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+    const bytes = await buildDocx(paragraphs);
+    const name = `Cover_Letter_${safeName(run.companyName ?? run.customCompany ?? "Job")}.docx`;
+    return { file: new File([bytes], name, { type: DOCX_TYPE }) };
+  }),
+
+  /** The user's experience notes. */
+  bank: authed.handler(async ({ context }) => {
+    const [row] = await db
+      .select()
+      .from(schema.experienceBanks)
+      .where(eq(schema.experienceBanks.userId, context.user.id));
+    return { content: row?.content ?? "", updatedAt: row?.updatedAt ?? null };
+  }),
+
+  saveBank: authed
+    .input(z.object({ content: z.string().max(30000) }))
+    .handler(async ({ input, context }) => {
+      const now = new Date();
+      await db
+        .insert(schema.experienceBanks)
+        .values({ userId: context.user.id, content: input.content, updatedAt: now })
+        .onConflictDoUpdate({
+          target: schema.experienceBanks.userId,
+          set: { content: input.content, updatedAt: now },
+        });
+      return { ok: true, updatedAt: now };
+    }),
+
+  /** Pulls the text out of an old cover letter or notes doc so it can be added to the bank. */
+  extractDocument: authed
+    .input(z.object({ file: z.instanceof(File) }))
+    .handler(async ({ input }) => {
+      if (input.file.size > 8 * 1024 * 1024) {
+        throw new ORPCError("BAD_REQUEST", { message: "That file is over 8MB." });
+      }
+      const bytes = new Uint8Array(await input.file.arrayBuffer());
+      const isDocx = input.file.name.toLowerCase().endsWith(".docx");
+      try {
+        const text = isDocx ? await extractDocxText(bytes) : await extractPdfText(bytes);
+        return { text: text.trim().slice(0, 30000) };
+      } catch (e) {
+        console.error("[resume] document extraction failed:", e);
+        throw new ORPCError("BAD_REQUEST", { message: "We couldn't read that file. Try a .docx or text-based PDF." });
+      }
     }),
 
   /** Past score runs, newest first. */
@@ -389,6 +651,8 @@ export const resume = {
         suggestions: schema.resumeScores.suggestions,
         createdAt: schema.resumeScores.createdAt,
         jobId: schema.resumeScores.jobId,
+        customCompany: schema.resumeScores.customCompany,
+        customTitle: schema.resumeScores.customTitle,
         jobTitle: schema.jobs.title,
         companyName: schema.companies.name,
       })
@@ -399,8 +663,10 @@ export const resume = {
       .orderBy(desc(schema.resumeScores.createdAt))
       .limit(20);
 
-    return rows.map((r) => ({
+    return rows.map(({ customCompany, customTitle, ...r }) => ({
       ...r,
+      jobTitle: r.jobTitle ?? customTitle,
+      companyName: r.companyName ?? customCompany,
       missingKeywords: JSON.parse(r.missingKeywords) as string[],
       suggestions: JSON.parse(r.suggestions) as { original: string; rewrite: string; why: string }[],
     }));

@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "wouter";
+import { Link, useSearch } from "wouter";
 import {
   Check,
+  ClipboardPaste,
   Copy,
   Download,
   FileText,
+  History,
+  Mail,
+  NotebookPen,
   Search,
   Sparkles,
   Upload,
@@ -14,15 +18,21 @@ import {
 import { AppShell } from "../components/app-shell";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
+import { Input, Label, Textarea } from "../components/ui/input";
 import { EmptyState, ErrorNote, Skeleton, Spinner } from "../components/ui/feedback";
 import { useJobs } from "../queries/jobs";
 import {
-  useApproveChanges,
   useCurrentResume,
   useDownloadResume,
+  useExperienceBank,
+  useExportCoverLetter,
+  useExportResume,
+  useExtractDocument,
   useResumeHistory,
+  useSaveExperienceBank,
+  useSaveTailor,
   useScoreResume,
+  useTailorHistory,
   useTailorResume,
   useUploadResume,
 } from "../queries/resume";
@@ -46,7 +56,14 @@ type TailorResult = {
   jobTitle: string;
   companyName: string;
   changes: { section: string; original: string; tailored: string; rationale: string }[];
+  approved: number[];
+  coverLetter: string;
 };
+
+type PastedJob = { company: string; title: string; description: string };
+
+const DOCX_ACCEPT =
+  ".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 function scoreTone(score: number) {
   if (score >= 80) return "#0F9D76";
@@ -211,7 +228,7 @@ function UploadCard() {
         <div>
           <p className="eyebrow">Your resume</p>
           <h2 className="mt-1.5 text-lg font-semibold text-foreground">
-            One PDF powers every tool
+            One file powers every tool
           </h2>
         </div>
         {resume.data ? (
@@ -262,7 +279,7 @@ function UploadCard() {
           </div>
 
           {resume.data.characters < 400 ? (
-            <ErrorNote message="We only read a little text from that PDF. If it was exported as an image, re-export it as a text-based PDF so the AI can work with it." />
+            <ErrorNote message="We only read a little text from that file. If it's a PDF exported as an image, upload the Word (.docx) version instead." />
           ) : (
             <div className="rounded-[12px] border border-border bg-muted/40 p-4">
               <p className="eyebrow">What we read</p>
@@ -298,10 +315,11 @@ function UploadCard() {
             {upload.isPending ? <Spinner className="size-5" /> : <Upload className="size-5" />}
           </span>
           <span className="text-sm font-semibold text-foreground">
-            {upload.isPending ? "Reading your resume…" : "Drop your resume PDF here"}
+            {upload.isPending ? "Reading your resume…" : "Drop your resume here"}
           </span>
           <span className="text-xs text-muted-foreground">
-            or click to browse · PDF only, up to 8MB
+            or click to browse · Word (.docx) or PDF, up to 8MB · .docx keeps your formatting
+            on tailored downloads
           </span>
         </button>
       )}
@@ -311,8 +329,8 @@ function UploadCard() {
       <input
         ref={inputRef}
         type="file"
-        aria-label="Upload resume PDF"
-        accept="application/pdf"
+        aria-label="Upload resume"
+        accept={`application/pdf,${DOCX_ACCEPT}`}
         className="hidden"
         onChange={(e) => {
           void handleFile(e.target.files?.[0]);
@@ -370,11 +388,20 @@ function ScorePanel({ result }: { result: ScoreResult }) {
 }
 
 function TailorPanel({ result }: { result: TailorResult }) {
-  const [approved, setApproved] = useState<number[]>(() => result.changes.map((_, i) => i));
-  const [copied, setCopied] = useState(false);
-  const approve = useApproveChanges();
+  const [approved, setApproved] = useState<number[]>(result.approved);
+  const [letter, setLetter] = useState(result.coverLetter);
+  const [copied, setCopied] = useState<"lines" | "letter" | null>(null);
+  const [missed, setMissed] = useState<{ original: string; tailored: string }[]>([]);
+  const [error, setError] = useState<string | undefined>();
+  const save = useSaveTailor();
+  const exportResume = useExportResume();
+  const exportLetter = useExportCoverLetter();
 
   const approvedSet = useMemo(() => new Set(approved), [approved]);
+  const dirty =
+    letter !== result.coverLetter ||
+    approved.length !== result.approved.length ||
+    approved.some((i) => !result.approved.includes(i));
 
   function toggle(index: number) {
     setApproved((current) =>
@@ -382,99 +409,366 @@ function TailorPanel({ result }: { result: TailorResult }) {
     );
   }
 
-  async function copyApproved() {
-    const text = result.changes
-      .filter((_, i) => approvedSet.has(i))
-      .map((change) => `• ${change.tailored}`)
-      .join("\n");
+  async function copy(kind: "lines" | "letter") {
+    const text =
+      kind === "letter"
+        ? letter
+        : result.changes
+            .filter((_, i) => approvedSet.has(i))
+            .map((change) => `• ${change.tailored}`)
+            .join("\n");
     await navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1800);
+    setCopied(kind);
+    setTimeout(() => setCopied(null), 1800);
+  }
+
+  async function persist() {
+    await save.mutateAsync({ id: result.id, approved, coverLetter: letter });
+  }
+
+  async function download(kind: "resume" | "letter") {
+    setError(undefined);
+    try {
+      await persist();
+      if (kind === "resume") setMissed(await exportResume.mutateAsync(result.id));
+      else await exportLetter.mutateAsync(result.id);
+    } catch (e) {
+      setError((e as Error).message || "Download failed.");
+    }
   }
 
   return (
-    <div className="mt-5 rounded-[14px] border border-border bg-card p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="eyebrow">
-            Tailored for {result.jobTitle} · {result.companyName}
-          </p>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            {approved.length} of {result.changes.length} changes kept. Every line is a rewrite of
-            your own work — nothing new was added.
-          </p>
+    <div className="mt-5 space-y-5">
+      <div className="rounded-[14px] border border-border bg-card p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="eyebrow">
+              Tailored for {result.jobTitle} · {result.companyName}
+            </p>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              {approved.length} of {result.changes.length} changes kept. Every line is a rewrite of
+              your own work — nothing new was added.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => void copy("lines")}>
+              {copied === "lines" ? <Check className="size-4" /> : <Copy className="size-4" />}
+              {copied === "lines" ? "Copied" : "Copy kept lines"}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => void download("resume")}
+              disabled={exportResume.isPending || approved.length === 0}
+            >
+              {exportResume.isPending ? <Spinner /> : <Download className="size-4" />}
+              Download resume
+            </Button>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => void copyApproved()}>
-            {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-            {copied ? "Copied" : "Copy kept lines"}
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => approve.mutate({ id: result.id, approved })}
-            disabled={approve.isPending}
-          >
-            {approve.isPending ? <Spinner /> : null}
-            {approve.isSuccess ? "Saved" : "Save selection"}
-          </Button>
+
+        {missed.length > 0 ? (
+          <div className="mt-4 rounded-[12px] border border-amber/40 bg-amber/5 p-4">
+            <p className="text-sm font-semibold text-foreground">
+              {missed.length} line{missed.length === 1 ? "" : "s"} couldn't be placed automatically
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Your downloaded resume has everything else. Paste these in by hand:
+            </p>
+            <ul className="mt-2.5 space-y-1.5">
+              {missed.map((m, i) => (
+                <li key={i} className="text-xs leading-relaxed text-foreground">
+                  • {m.tailored}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        <div className="mt-5 space-y-3">
+          {result.changes.map((change, i) => {
+            const isApproved = approvedSet.has(i);
+            return (
+              <div
+                key={i}
+                className={cn(
+                  "rounded-[12px] border p-4 transition",
+                  isApproved ? "border-primary/35 bg-sky-1" : "border-border bg-muted/30 opacity-70",
+                )}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <Badge tone={isApproved ? "blue" : "gray"}>{change.section}</Badge>
+                  <button
+                    type="button"
+                    onClick={() => toggle(i)}
+                    className={cn(
+                      "jl-pill transition",
+                      isApproved
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground hover:bg-border",
+                    )}
+                  >
+                    {isApproved ? <Check className="size-3" /> : <X className="size-3" />}
+                    {isApproved ? "Keeping" : "Skipped"}
+                  </button>
+                </div>
+
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                      Before
+                    </p>
+                    <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                      {change.original}
+                    </p>
+                  </div>
+                  <div className="sm:border-l sm:border-border sm:pl-3">
+                    <p className="font-mono text-[10px] uppercase tracking-wider text-primary">
+                      After
+                    </p>
+                    <p className="mt-1.5 text-sm font-medium leading-relaxed text-foreground">
+                      {change.tailored}
+                    </p>
+                  </div>
+                </div>
+
+                <p className="mt-3 border-t border-border/70 pt-2.5 text-xs text-muted-foreground">
+                  {change.rationale}
+                </p>
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      <div className="mt-5 space-y-3">
-        {result.changes.map((change, i) => {
-          const isApproved = approvedSet.has(i);
-          return (
-            <div
-              key={i}
-              className={cn(
-                "rounded-[12px] border p-4 transition",
-                isApproved ? "border-primary/35 bg-sky-1" : "border-border bg-muted/30 opacity-70",
-              )}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <Badge tone={isApproved ? "blue" : "gray"}>{change.section}</Badge>
-                <button
-                  type="button"
-                  onClick={() => toggle(i)}
-                  className={cn(
-                    "jl-pill transition",
-                    isApproved
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground hover:bg-border",
-                  )}
-                >
-                  {isApproved ? <Check className="size-3" /> : <X className="size-3" />}
-                  {isApproved ? "Keeping" : "Skipped"}
-                </button>
-              </div>
-
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <div>
-                  <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                    Before
-                  </p>
-                  <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                    {change.original}
-                  </p>
-                </div>
-                <div className="sm:border-l sm:border-border sm:pl-3">
-                  <p className="font-mono text-[10px] uppercase tracking-wider text-primary">
-                    After
-                  </p>
-                  <p className="mt-1.5 text-sm font-medium leading-relaxed text-foreground">
-                    {change.tailored}
-                  </p>
-                </div>
-              </div>
-
-              <p className="mt-3 border-t border-border/70 pt-2.5 text-xs text-muted-foreground">
-                {change.rationale}
+      {result.coverLetter ? (
+        <div className="rounded-[14px] border border-border bg-card p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="eyebrow">Cover letter</p>
+              <p className="mt-1.5 text-sm text-muted-foreground">
+                Drafted from your resume and experience notes. Edit it here — downloads use your
+                version.
               </p>
             </div>
-          );
-        })}
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={() => void copy("letter")}>
+                {copied === "letter" ? <Check className="size-4" /> : <Copy className="size-4" />}
+                {copied === "letter" ? "Copied" : "Copy"}
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => void download("letter")}
+                disabled={exportLetter.isPending || !letter.trim()}
+              >
+                {exportLetter.isPending ? <Spinner /> : <Mail className="size-4" />}
+                Download cover letter
+              </Button>
+            </div>
+          </div>
+          <Textarea
+            aria-label="Cover letter"
+            value={letter}
+            onChange={(e) => setLetter(e.target.value)}
+            className="mt-4 min-h-[380px] text-[13.5px]"
+          />
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        {error ? <ErrorNote className="mr-auto" message={error} /> : null}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void persist()}
+          disabled={save.isPending || !dirty}
+        >
+          {save.isPending ? <Spinner /> : null}
+          {dirty ? "Save changes" : "Saved"}
+        </Button>
       </div>
     </div>
+  );
+}
+
+/** Extra true facts — projects, courses, old cover letters — the AI may draw on. */
+function ExperienceBankCard() {
+  const bank = useExperienceBank();
+  const saveBank = useSaveExperienceBank();
+  const extract = useExtractDocument();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [error, setError] = useState<string | undefined>();
+
+  const value = draft ?? bank.data?.content ?? "";
+  const dirty = draft !== null && draft !== (bank.data?.content ?? "");
+
+  async function importFile(file?: File | null) {
+    if (!file) return;
+    setError(undefined);
+    try {
+      const { text } = await extract.mutateAsync({ file });
+      setDraft((value ? `${value.trimEnd()}\n\n` : "") + text);
+    } catch (e) {
+      setError((e as Error).message || "Couldn't read that file.");
+    }
+  }
+
+  async function save() {
+    setError(undefined);
+    try {
+      await saveBank.mutateAsync({ content: value });
+      setDraft(null);
+    } catch (e) {
+      setError((e as Error).message || "Save failed.");
+    }
+  }
+
+  return (
+    <section className="jl-card p-5 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="eyebrow">Experience notes</p>
+          <h2 className="mt-1.5 text-lg font-semibold text-foreground">
+            Everything that didn't fit on one page
+          </h2>
+          <p className="mt-1 max-w-[52ch] text-sm text-muted-foreground">
+            Projects, coursework, certifications, old cover-letter paragraphs. Tailoring and
+            cover letters pull from these alongside your resume — only add what's true.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => inputRef.current?.click()}
+          disabled={extract.isPending}
+        >
+          {extract.isPending ? <Spinner /> : <NotebookPen className="size-4" />}
+          Import a document
+        </Button>
+      </div>
+
+      {bank.isPending ? (
+        <Skeleton className="mt-5 h-[160px] w-full" />
+      ) : (
+        <Textarea
+          aria-label="Experience notes"
+          value={value}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="e.g. Built a top-down tank game in Pygame using trigonometry and matrix math for movement…"
+          className="mt-5 min-h-[160px] text-[13px]"
+        />
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-muted-foreground">
+          {value.length.toLocaleString()} / 30,000 characters
+        </p>
+        <Button size="sm" onClick={() => void save()} disabled={!dirty || saveBank.isPending}>
+          {saveBank.isPending ? <Spinner /> : null}
+          {dirty ? "Save notes" : "Saved"}
+        </Button>
+      </div>
+
+      {error ? <ErrorNote className="mt-4" message={error} /> : null}
+
+      <input
+        ref={inputRef}
+        type="file"
+        aria-label="Import experience document"
+        accept={`application/pdf,${DOCX_ACCEPT}`}
+        className="hidden"
+        onChange={(e) => {
+          void importFile(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
+    </section>
+  );
+}
+
+function PasteJobForm({ value, onChange }: { value: PastedJob; onChange: (v: PastedJob) => void }) {
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <Label htmlFor="paste-company">Company</Label>
+          <Input
+            id="paste-company"
+            value={value.company}
+            onChange={(e) => onChange({ ...value, company: e.target.value })}
+            placeholder="Corteva"
+          />
+        </div>
+        <div>
+          <Label htmlFor="paste-title">Role</Label>
+          <Input
+            id="paste-title"
+            value={value.title}
+            onChange={(e) => onChange({ ...value, title: e.target.value })}
+            placeholder="Data Science Intern"
+          />
+        </div>
+      </div>
+      <div>
+        <Label htmlFor="paste-description">Job description</Label>
+        <Textarea
+          id="paste-description"
+          value={value.description}
+          onChange={(e) => onChange({ ...value, description: e.target.value })}
+          placeholder="Paste the full posting — responsibilities, qualifications, nice-to-haves."
+          className="min-h-[160px] text-[13px]"
+        />
+      </div>
+    </div>
+  );
+}
+
+function TailorHistoryCard({ onOpen }: { onOpen: (run: TailorResult) => void }) {
+  const history = useTailorHistory();
+
+  return (
+    <section className="jl-card p-5">
+      <p className="eyebrow">Tailored applications</p>
+      {history.isPending ? (
+        <div className="mt-4 space-y-2">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-14 w-full" />
+          ))}
+        </div>
+      ) : (history.data?.length ?? 0) === 0 ? (
+        <p className="mt-3 text-sm text-muted-foreground">
+          Each job you tailor for lands here, so you can re-download its resume and letter.
+        </p>
+      ) : (
+        <ul className="mt-4 space-y-2">
+          {history.data!.map((run) => (
+            <li key={run.id}>
+              <button
+                type="button"
+                onClick={() => onOpen(run)}
+                className="flex w-full items-center gap-3 rounded-[11px] border border-border px-3 py-2.5 text-left transition hover:bg-muted"
+              >
+                <span
+                  className="grid size-9 shrink-0 place-items-center rounded-[9px] text-[11px] font-bold text-white"
+                  style={{ backgroundColor: markColor(run.companyName) }}
+                >
+                  {initials(run.companyName)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-foreground">
+                    {run.jobTitle}
+                  </span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {run.companyName} · {shortDate(run.createdAt)}
+                  </span>
+                </span>
+                <History className="size-4 shrink-0 text-muted-foreground" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -529,7 +823,10 @@ export default function ResumePage() {
   const score = useScoreResume();
   const tailor = useTailorResume();
 
+  const search = useSearch();
+  const [mode, setMode] = useState<"board" | "paste">("board");
   const [job, setJob] = useState<PickedJob | null>(null);
+  const [pasted, setPasted] = useState<PastedJob>({ company: "", title: "", description: "" });
   const [scoreResult, setScoreResult] = useState<ScoreResult | null>(null);
   const [tailorResult, setTailorResult] = useState<TailorResult | null>(null);
   const [error, setError] = useState<string | undefined>();
@@ -540,23 +837,47 @@ export default function ResumePage() {
   const scoreOut = scoreBalance ? !scoreBalance.allowed : false;
   const tailorOut = tailorBalance ? !tailorBalance.allowed : false;
 
+  // Deep links from the board and tracker: ?jobId=&title=&company=
+  useEffect(() => {
+    const params = new URLSearchParams(search);
+    const jobId = Number(params.get("jobId"));
+    const title = params.get("title") ?? "";
+    const company = params.get("company") ?? "";
+    if (jobId > 0) {
+      setMode("board");
+      setJob({ id: jobId, title: title || "Selected posting", companyName: company || "—" });
+    } else if (title || company) {
+      setMode("paste");
+      setPasted((p) => ({ ...p, title, company }));
+    }
+  }, [search]);
+
+  const target =
+    mode === "board"
+      ? job
+        ? { jobId: job.id }
+        : null
+      : pasted.company.trim() && pasted.title.trim() && pasted.description.trim().length >= 80
+        ? { custom: pasted }
+        : null;
+
   async function runScore() {
-    if (!job) return;
+    if (!target) return;
     setError(undefined);
     setScoreResult(null);
     try {
-      setScoreResult(await score.mutateAsync({ jobId: job.id }));
+      setScoreResult(await score.mutateAsync(target));
     } catch (e) {
       setError((e as Error).message || "Scoring failed. You may be out of scores this month.");
     }
   }
 
   async function runTailor() {
-    if (!job) return;
+    if (!target) return;
     setError(undefined);
     setTailorResult(null);
     try {
-      setTailorResult(await tailor.mutateAsync({ jobId: job.id }));
+      setTailorResult(await tailor.mutateAsync(target));
     } catch (e) {
       setError((e as Error).message || "Tailoring failed. You may be out of runs this month.");
     }
@@ -565,7 +886,7 @@ export default function ResumePage() {
   return (
     <AppShell
       title="Resume"
-      subtitle="Score it against a real posting, then tailor the bullets you already have."
+      subtitle="Tailor your resume and cover letter to every job you apply to."
       actions={
         <Button variant="outline" size="sm" asChild>
           <Link href="/board">Browse jobs</Link>
@@ -575,32 +896,62 @@ export default function ResumePage() {
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-5">
           <UploadCard />
+          <ExperienceBankCard />
 
           <section className="jl-card p-5 sm:p-6">
             <p className="eyebrow">AI tools</p>
             <h2 className="mt-1.5 text-lg font-semibold text-foreground">
-              Match against a live posting
+              Tailor for one job
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Both tools read the real job description. They never invent experience you don't have.
+              Pick a posting from the board or paste one from anywhere. You get rewritten bullets
+              to approve, a matching cover letter, and Word downloads of both.
             </p>
 
             {!hasResume ? (
               <EmptyState
                 className="mt-5"
                 title="Upload a resume first"
-                body="The scorer and the tailoring tool both work from your uploaded PDF."
+                body="The scorer and the tailoring tool both work from your uploaded resume."
               />
             ) : (
               <>
-                <div className="mt-5">
-                  <JobPicker picked={job} onPick={setJob} />
+                <div className="mt-5 inline-flex rounded-[10px] border border-border bg-muted/40 p-1">
+                  {(
+                    [
+                      { id: "board", label: "From the board", icon: Search },
+                      { id: "paste", label: "Paste a posting", icon: ClipboardPaste },
+                    ] as const
+                  ).map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setMode(tab.id)}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-[13px] font-medium transition",
+                        mode === tab.id
+                          ? "bg-card text-foreground shadow-[0_1px_2px_rgba(16,32,64,0.12)]"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      <tab.icon className="size-3.5" />
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mt-4">
+                  {mode === "board" ? (
+                    <JobPicker picked={job} onPick={setJob} />
+                  ) : (
+                    <PasteJobForm value={pasted} onChange={setPasted} />
+                  )}
                 </div>
 
                 <div className="mt-4 flex flex-wrap gap-2.5">
                   <Button
                     onClick={() => void runScore()}
-                    disabled={!job || score.isPending || scoreOut}
+                    disabled={!target || score.isPending || scoreOut}
                   >
                     {score.isPending ? <Spinner /> : <Sparkles className="size-4" />}
                     {score.isPending ? "Scoring…" : "Score my match"}
@@ -608,10 +959,10 @@ export default function ResumePage() {
                   <Button
                     variant="outline"
                     onClick={() => void runTailor()}
-                    disabled={!job || tailor.isPending || tailorOut}
+                    disabled={!target || tailor.isPending || tailorOut}
                   >
                     {tailor.isPending ? <Spinner /> : <Wand2 className="size-4" />}
-                    {tailor.isPending ? "Tailoring…" : "Tailor my bullets"}
+                    {tailor.isPending ? "Tailoring…" : "Tailor resume + cover letter"}
                   </Button>
                   {scoreOut || tailorOut ? (
                     <Button variant="ghost" asChild>
@@ -637,11 +988,11 @@ export default function ResumePage() {
                   <div className="mt-5 flex items-center gap-3 rounded-[14px] border border-border bg-muted/30 px-5 py-6">
                     <Spinner />
                     <p className="text-sm text-muted-foreground">
-                      Rewriting your real bullets in the posting's language…
+                      Rewriting your real bullets and drafting a cover letter…
                     </p>
                   </div>
                 ) : tailorResult ? (
-                  <TailorPanel result={tailorResult} />
+                  <TailorPanel key={tailorResult.id} result={tailorResult} />
                 ) : null}
               </>
             )}
@@ -672,6 +1023,12 @@ export default function ResumePage() {
             ) : null}
           </section>
 
+          <TailorHistoryCard
+            onOpen={(run) => {
+              setTailorResult(run);
+              setScoreResult(null);
+            }}
+          />
           <HistoryCard />
         </div>
       </div>
