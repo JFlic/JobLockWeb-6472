@@ -1,4 +1,8 @@
 import app from "./api";
+import { ensureSignedIn } from "./api/publik";
+
+// Self-hosted start: Sign in with publik before the first page is served.
+if (!process.env.VERCEL) await ensureSignedIn();
 
 const port = Number(process.env.PORT ?? 3000);
 const distDir = `${import.meta.dirname}/../dist`;

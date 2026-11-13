@@ -7,7 +7,7 @@ import { authed } from "../middleware/auth";
 import { db } from "../database";
 import * as schema from "../database/schema";
 import { downloadUrl, readObject, uploadUrl } from "../lib/s3";
-import { gateway, RESUME_MODEL, withAi } from "../agent/gateway";
+import { withAi } from "../agent/gateway";
 import { FEATURES, featureBalance, requireFeature, trackFeature } from "../lib/billing";
 import {
   DOCX_TYPE,
@@ -303,8 +303,8 @@ export const resume = {
         loadBank(userId),
       ]);
 
-      const { object } = await withAi(() => generateObject({
-        model: gateway(RESUME_MODEL),
+      const { object } = await withAi((model) => generateObject({
+        model,
         schema: scoreSchema,
         system: dedent`
           You are a blunt but fair technical recruiter screening new-grad and junior
@@ -380,8 +380,8 @@ export const resume = {
         loadBank(userId),
       ]);
 
-      const { object } = await withAi(() => generateObject({
-        model: gateway(RESUME_MODEL),
+      const { object } = await withAi((model) => generateObject({
+        model,
         schema: tailorSchema,
         system: dedent`
           You tailor an existing resume and write a matching cover letter for one
