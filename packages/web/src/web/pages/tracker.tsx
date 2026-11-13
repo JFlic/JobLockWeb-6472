@@ -388,8 +388,8 @@ export default function TrackerPage() {
       title="Application tracker"
       subtitle={
         slotsUnlimited
-          ? `${slotsUsed} applications tracked`
-          : `${slotsUsed}${slotLimit ? ` of ${slotLimit}` : ""} slots used`
+          ? `${slotsUsed} application${slotsUsed === 1 ? "" : "s"} tracked`
+          : `${slotsUsed}${slotLimit ? ` of ${slotLimit}` : ""} slot${(slotLimit ?? slotsUsed) === 1 ? "" : "s"} used`
       }
       actions={
         <Button onClick={() => setAdding(true)} className="rounded-[10px] font-semibold">
