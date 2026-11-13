@@ -24,6 +24,7 @@ import { useCurrentResume, useScoreResume } from "../queries/resume";
 import { formatBalance, useUsage } from "../queries/billing";
 import { initials, levelLabel, markColor, relativeTime } from "../lib/format";
 import { cn } from "@/lib/utils";
+import { SHOW_PRICING } from "../lib/flags";
 
 const PAGE_SIZE = 24;
 
@@ -235,13 +236,13 @@ export default function BoardPage() {
             ) : null}
 
             <span className="ml-auto font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
-              {jobsQuery.isFetching ? "searching…" : `${total} result${total === 1 ? "" : "s"}`}
+              {jobsQuery.isPlaceholderData ? "searching…" : `${total} result${total === 1 ? "" : "s"}`}
             </span>
           </div>
         </div>
 
         {/* Free-plan nudge */}
-        {usage.data && !usage.data.resumeScore.unlimited && usage.data.resumeScore.remaining <= 0 ? (
+        {SHOW_PRICING && usage.data && !usage.data.resumeScore.unlimited && usage.data.resumeScore.remaining <= 0 ? (
           <div className="flex flex-wrap items-center gap-3 rounded-[12px] border border-amber/30 bg-amber/8 px-4 py-3">
             <Sparkles className="size-4 shrink-0 text-amber" />
             <p className="flex-1 text-[13.5px] text-foreground">
@@ -457,12 +458,16 @@ export default function BoardPage() {
         ) : scoreError ? (
           <div className="space-y-4">
             <ErrorNote message={scoreError} />
-            <p className="text-[13px] text-muted-foreground">
-              Scores left this month: {formatBalance(usage.data?.resumeScore)}
-            </p>
-            <Button asChild variant="outline" className="w-full rounded-[10px] font-semibold">
-              <Link to="/pricing">See plans</Link>
-            </Button>
+            {SHOW_PRICING ? (
+              <>
+                <p className="text-[13px] text-muted-foreground">
+                  Scores left this month: {formatBalance(usage.data?.resumeScore)}
+                </p>
+                <Button asChild variant="outline" className="w-full rounded-[10px] font-semibold">
+                  <Link to="/pricing">See plans</Link>
+                </Button>
+              </>
+            ) : null}
           </div>
         ) : scoreResult ? (
           <div className="space-y-5">
@@ -510,9 +515,11 @@ export default function BoardPage() {
               </div>
             ) : null}
 
-            <p className="border-t border-border pt-3 font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground">
-              {formatBalance(usage.data?.resumeScore)} this month
-            </p>
+            {SHOW_PRICING ? (
+              <p className="border-t border-border pt-3 font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground">
+                {formatBalance(usage.data?.resumeScore)} this month
+              </p>
+            ) : null}
           </div>
         ) : null}
       </Dialog>

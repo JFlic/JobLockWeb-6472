@@ -29,6 +29,7 @@ import {
 import { useUsage } from "../queries/billing";
 import { initials, levelLabel, markColor, shortDate } from "../lib/format";
 import { cn } from "@/lib/utils";
+import { SHOW_PRICING } from "../lib/flags";
 
 const COLUMNS: { id: AppStatus; label: string; tone: string }[] = [
   { id: "saved", label: "Saved", tone: "#6FA8F0" },
@@ -439,7 +440,7 @@ export default function TrackerPage() {
           })}
         </div>
 
-        {nearLimit ? (
+        {SHOW_PRICING && nearLimit ? (
           <div className="flex flex-wrap items-center gap-3 rounded-[12px] border border-amber/30 bg-amber/8 px-4 py-3">
             <Sparkles className="size-4 shrink-0 text-amber" />
             <p className="flex-1 text-[13.5px] text-foreground">

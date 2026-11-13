@@ -1,4 +1,4 @@
-import { Route, Switch } from "wouter";
+import { Redirect, Route, Switch } from "wouter";
 import Index from "./pages/index";
 import AuthPage from "./pages/auth";
 import PricingPage from "./pages/pricing";
@@ -8,14 +8,15 @@ import ResumePage from "./pages/resume";
 import { Provider } from "./components/provider";
 import { ProtectedRoute } from "./components/protected-route";
 import { AgentFeedback, RunableBadge } from "@runablehq/website-runtime";
+import { NO_AUTH, SHOW_PRICING } from "./lib/flags";
 
 function App() {
   return (
     <Provider>
       <Switch>
         <Route path="/" component={Index} />
-        <Route path="/pricing" component={PricingPage} />
-        <Route path="/auth" component={AuthPage} />
+        <Route path="/pricing">{SHOW_PRICING ? <PricingPage /> : <Redirect to="/" />}</Route>
+        <Route path="/auth">{NO_AUTH ? <Redirect to="/board" /> : <AuthPage />}</Route>
         <Route path="/board">
           <ProtectedRoute>
             <BoardPage />

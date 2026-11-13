@@ -72,3 +72,9 @@ scripts/
 !packages/mobile/scripts/
 packages/mobile/scripts/*
 !packages/mobile/scripts/generate-ios-certs.py
+
+# local dev storage
+.local-uploads
+
+# vercel
+.vercel

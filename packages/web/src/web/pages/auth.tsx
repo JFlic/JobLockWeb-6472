@@ -9,6 +9,7 @@ import { ErrorNote, Spinner } from "../components/ui/feedback";
 import { Lockmark } from "../components/lockmark";
 import { useJobStats } from "../queries/jobs";
 import { cn } from "@/lib/utils";
+import { SHOW_PRICING } from "../lib/flags";
 
 type Mode = "signin" | "signup";
 
@@ -85,7 +86,9 @@ export default function AuthPage() {
           </h1>
           <p className="mt-2 text-[14.5px] text-muted-foreground">
             {mode === "signup"
-              ? "Free forever for 50 applications and 3 resume scores a month."
+              ? SHOW_PRICING
+                ? "Free forever for 50 applications and 3 resume scores a month."
+                : "Lock in your search — board, tracker and resume tools in one place."
               : "Pick up where your search left off."}
           </p>
 
@@ -205,7 +208,7 @@ export default function AuthPage() {
               "Straight from company job boards — no recruiter spam",
               "One kanban board for every application you send",
               "AI match scores that never invent experience",
-              "Free plan covers a real multi-week search",
+              ...(SHOW_PRICING ? ["Free plan covers a real multi-week search"] : []),
             ].map((item) => (
               <li key={item} className="flex items-start gap-3 text-[14.5px] leading-snug text-navy/85">
                 <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-ink text-white">

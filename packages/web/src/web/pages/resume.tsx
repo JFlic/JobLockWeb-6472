@@ -6,7 +6,6 @@ import {
   Copy,
   Download,
   FileText,
-  History,
   Mail,
   NotebookPen,
   Search,
@@ -19,7 +18,7 @@ import { AppShell } from "../components/app-shell";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input, Label, Textarea } from "../components/ui/input";
-import { EmptyState, ErrorNote, Skeleton, Spinner } from "../components/ui/feedback";
+import { ErrorNote, Skeleton, Spinner } from "../components/ui/feedback";
 import { useJobs } from "../queries/jobs";
 import {
   useCurrentResume,
@@ -28,17 +27,16 @@ import {
   useExportCoverLetter,
   useExportResume,
   useExtractDocument,
-  useResumeHistory,
   useSaveExperienceBank,
   useSaveTailor,
   useScoreResume,
-  useTailorHistory,
   useTailorResume,
   useUploadResume,
 } from "../queries/resume";
 import { formatBalance, useUsage } from "../queries/billing";
-import { initials, levelLabel, markColor, relativeTime, shortDate } from "../lib/format";
+import { initials, levelLabel, markColor, relativeTime } from "../lib/format";
 import { cn } from "@/lib/utils";
+import { SHOW_PRICING } from "../lib/flags";
 
 type PickedJob = { id: number; title: string; companyName: string };
 
@@ -225,12 +223,7 @@ function UploadCard() {
   return (
     <section className="jl-card p-5 sm:p-6">
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="eyebrow">Your resume</p>
-          <h2 className="mt-1.5 text-lg font-semibold text-foreground">
-            One file powers every tool
-          </h2>
-        </div>
+        <h2 className="text-lg font-semibold text-foreground">Resume</h2>
         {resume.data ? (
           <Badge tone="mint">
             <Check className="size-3" />
@@ -252,7 +245,6 @@ function UploadCard() {
                 {resume.data.filename}
               </p>
               <p className="text-xs text-muted-foreground">
-                {resume.data.characters.toLocaleString()} characters read ·{" "}
                 {relativeTime(resume.data.createdAt)}
               </p>
             </div>
@@ -279,15 +271,8 @@ function UploadCard() {
           </div>
 
           {resume.data.characters < 400 ? (
-            <ErrorNote message="We only read a little text from that file. If it's a PDF exported as an image, upload the Word (.docx) version instead." />
-          ) : (
-            <div className="rounded-[12px] border border-border bg-muted/40 p-4">
-              <p className="eyebrow">What we read</p>
-              <p className="mt-2 line-clamp-4 whitespace-pre-line text-xs leading-relaxed text-muted-foreground">
-                {resume.data.preview}
-              </p>
-            </div>
-          )}
+            <ErrorNote message="Couldn't read much text. Try the .docx version." />
+          ) : null}
         </div>
       ) : (
         <button
@@ -318,8 +303,7 @@ function UploadCard() {
             {upload.isPending ? "Reading your resume…" : "Drop your resume here"}
           </span>
           <span className="text-xs text-muted-foreground">
-            or click to browse · Word (.docx) or PDF, up to 8MB · .docx keeps your formatting
-            on tailored downloads
+            .docx or PDF
           </span>
         </button>
       )}
@@ -378,7 +362,6 @@ function ScorePanel({ result }: { result: ScoreResult }) {
               <p className="mt-2 text-sm font-medium leading-relaxed text-foreground">
                 {suggestion.rewrite}
               </p>
-              <p className="mt-2 text-xs text-muted-foreground">{suggestion.why}</p>
             </div>
           ))}
         </div>
@@ -441,15 +424,9 @@ function TailorPanel({ result }: { result: TailorResult }) {
     <div className="mt-5 space-y-5">
       <div className="rounded-[14px] border border-border bg-card p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="eyebrow">
-              Tailored for {result.jobTitle} · {result.companyName}
-            </p>
-            <p className="mt-1.5 text-sm text-muted-foreground">
-              {approved.length} of {result.changes.length} changes kept. Every line is a rewrite of
-              your own work — nothing new was added.
-            </p>
-          </div>
+          <p className="eyebrow">
+            {result.jobTitle} · {result.companyName} · {approved.length}/{result.changes.length} kept
+          </p>
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" onClick={() => void copy("lines")}>
               {copied === "lines" ? <Check className="size-4" /> : <Copy className="size-4" />}
@@ -469,10 +446,7 @@ function TailorPanel({ result }: { result: TailorResult }) {
         {missed.length > 0 ? (
           <div className="mt-4 rounded-[12px] border border-amber/40 bg-amber/5 p-4">
             <p className="text-sm font-semibold text-foreground">
-              {missed.length} line{missed.length === 1 ? "" : "s"} couldn't be placed automatically
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Your downloaded resume has everything else. Paste these in by hand:
+              Paste these in by hand:
             </p>
             <ul className="mt-2.5 space-y-1.5">
               {missed.map((m, i) => (
@@ -530,10 +504,6 @@ function TailorPanel({ result }: { result: TailorResult }) {
                     </p>
                   </div>
                 </div>
-
-                <p className="mt-3 border-t border-border/70 pt-2.5 text-xs text-muted-foreground">
-                  {change.rationale}
-                </p>
               </div>
             );
           })}
@@ -543,13 +513,7 @@ function TailorPanel({ result }: { result: TailorResult }) {
       {result.coverLetter ? (
         <div className="rounded-[14px] border border-border bg-card p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="eyebrow">Cover letter</p>
-              <p className="mt-1.5 text-sm text-muted-foreground">
-                Drafted from your resume and experience notes. Edit it here — downloads use your
-                version.
-              </p>
-            </div>
+            <p className="eyebrow">Cover letter</p>
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" size="sm" onClick={() => void copy("letter")}>
                 {copied === "letter" ? <Check className="size-4" /> : <Copy className="size-4" />}
@@ -626,16 +590,7 @@ function ExperienceBankCard() {
   return (
     <section className="jl-card p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="eyebrow">Experience notes</p>
-          <h2 className="mt-1.5 text-lg font-semibold text-foreground">
-            Everything that didn't fit on one page
-          </h2>
-          <p className="mt-1 max-w-[52ch] text-sm text-muted-foreground">
-            Projects, coursework, certifications, old cover-letter paragraphs. Tailoring and
-            cover letters pull from these alongside your resume — only add what's true.
-          </p>
-        </div>
+        <h2 className="text-lg font-semibold text-foreground">Experience notes</h2>
         <Button
           variant="outline"
           size="sm"
@@ -643,7 +598,7 @@ function ExperienceBankCard() {
           disabled={extract.isPending}
         >
           {extract.isPending ? <Spinner /> : <NotebookPen className="size-4" />}
-          Import a document
+          Import
         </Button>
       </div>
 
@@ -654,15 +609,12 @@ function ExperienceBankCard() {
           aria-label="Experience notes"
           value={value}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="e.g. Built a top-down tank game in Pygame using trigonometry and matrix math for movement…"
+          placeholder="Projects, courses, certifications…"
           className="mt-5 min-h-[160px] text-[13px]"
         />
       )}
 
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs text-muted-foreground">
-          {value.length.toLocaleString()} / 30,000 characters
-        </p>
+      <div className="mt-3 flex justify-end">
         <Button size="sm" onClick={() => void save()} disabled={!dirty || saveBank.isPending}>
           {saveBank.isPending ? <Spinner /> : null}
           {dirty ? "Save notes" : "Saved"}
@@ -720,100 +672,6 @@ function PasteJobForm({ value, onChange }: { value: PastedJob; onChange: (v: Pas
         />
       </div>
     </div>
-  );
-}
-
-function TailorHistoryCard({ onOpen }: { onOpen: (run: TailorResult) => void }) {
-  const history = useTailorHistory();
-
-  return (
-    <section className="jl-card p-5">
-      <p className="eyebrow">Tailored applications</p>
-      {history.isPending ? (
-        <div className="mt-4 space-y-2">
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-14 w-full" />
-          ))}
-        </div>
-      ) : (history.data?.length ?? 0) === 0 ? (
-        <p className="mt-3 text-sm text-muted-foreground">
-          Each job you tailor for lands here, so you can re-download its resume and letter.
-        </p>
-      ) : (
-        <ul className="mt-4 space-y-2">
-          {history.data!.map((run) => (
-            <li key={run.id}>
-              <button
-                type="button"
-                onClick={() => onOpen(run)}
-                className="flex w-full items-center gap-3 rounded-[11px] border border-border px-3 py-2.5 text-left transition hover:bg-muted"
-              >
-                <span
-                  className="grid size-9 shrink-0 place-items-center rounded-[9px] text-[11px] font-bold text-white"
-                  style={{ backgroundColor: markColor(run.companyName) }}
-                >
-                  {initials(run.companyName)}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium text-foreground">
-                    {run.jobTitle}
-                  </span>
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {run.companyName} · {shortDate(run.createdAt)}
-                  </span>
-                </span>
-                <History className="size-4 shrink-0 text-muted-foreground" />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-function HistoryCard() {
-  const history = useResumeHistory();
-
-  return (
-    <section className="jl-card p-5">
-      <p className="eyebrow">Score history</p>
-      {history.isPending ? (
-        <div className="mt-4 space-y-2">
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-14 w-full" />
-          ))}
-        </div>
-      ) : (history.data?.length ?? 0) === 0 ? (
-        <p className="mt-3 text-sm text-muted-foreground">
-          Nothing scored yet. Pick a posting and run your first match.
-        </p>
-      ) : (
-        <ul className="mt-4 space-y-2">
-          {history.data!.map((run) => (
-            <li
-              key={run.id}
-              className="flex items-center gap-3 rounded-[11px] border border-border px-3 py-2.5"
-            >
-              <span
-                className="grid size-9 shrink-0 place-items-center rounded-full text-[12px] font-bold text-white"
-                style={{ backgroundColor: scoreTone(run.score) }}
-              >
-                {run.score}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-foreground">
-                  {run.jobTitle ?? "Removed posting"}
-                </p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {run.companyName ?? "—"} · {shortDate(run.createdAt)}
-                </p>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
   );
 }
 
@@ -886,34 +744,22 @@ export default function ResumePage() {
   return (
     <AppShell
       title="Resume"
-      subtitle="Tailor your resume and cover letter to every job you apply to."
       actions={
         <Button variant="outline" size="sm" asChild>
           <Link href="/board">Browse jobs</Link>
         </Button>
       }
     >
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className={cn("grid gap-5", SHOW_PRICING && "lg:grid-cols-[minmax(0,1fr)_320px]")}>
         <div className="space-y-5">
           <UploadCard />
           <ExperienceBankCard />
 
           <section className="jl-card p-5 sm:p-6">
-            <p className="eyebrow">AI tools</p>
-            <h2 className="mt-1.5 text-lg font-semibold text-foreground">
-              Tailor for one job
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Pick a posting from the board or paste one from anywhere. You get rewritten bullets
-              to approve, a matching cover letter, and Word downloads of both.
-            </p>
+            <h2 className="text-lg font-semibold text-foreground">Tailor for a job</h2>
 
             {!hasResume ? (
-              <EmptyState
-                className="mt-5"
-                title="Upload a resume first"
-                body="The scorer and the tailoring tool both work from your uploaded resume."
-              />
+              <p className="mt-3 text-sm text-muted-foreground">Upload a resume first.</p>
             ) : (
               <>
                 <div className="mt-5 inline-flex rounded-[10px] border border-border bg-muted/40 p-1">
@@ -964,7 +810,7 @@ export default function ResumePage() {
                     {tailor.isPending ? <Spinner /> : <Wand2 className="size-4" />}
                     {tailor.isPending ? "Tailoring…" : "Tailor resume + cover letter"}
                   </Button>
-                  {scoreOut || tailorOut ? (
+                  {SHOW_PRICING && (scoreOut || tailorOut) ? (
                     <Button variant="ghost" asChild>
                       <Link href="/pricing">Out of runs — upgrade</Link>
                     </Button>
@@ -973,32 +819,14 @@ export default function ResumePage() {
 
                 {error ? <ErrorNote className="mt-4" message={error} /> : null}
 
-                {score.isPending ? (
-                  <div className="mt-5 flex items-center gap-3 rounded-[14px] border border-border bg-muted/30 px-5 py-6">
-                    <Spinner />
-                    <p className="text-sm text-muted-foreground">
-                      Reading the posting and grading your resume against it…
-                    </p>
-                  </div>
-                ) : scoreResult ? (
-                  <ScorePanel result={scoreResult} />
-                ) : null}
-
-                {tailor.isPending ? (
-                  <div className="mt-5 flex items-center gap-3 rounded-[14px] border border-border bg-muted/30 px-5 py-6">
-                    <Spinner />
-                    <p className="text-sm text-muted-foreground">
-                      Rewriting your real bullets and drafting a cover letter…
-                    </p>
-                  </div>
-                ) : tailorResult ? (
-                  <TailorPanel key={tailorResult.id} result={tailorResult} />
-                ) : null}
+                {scoreResult ? <ScorePanel result={scoreResult} /> : null}
+                {tailorResult ? <TailorPanel key={tailorResult.id} result={tailorResult} /> : null}
               </>
             )}
           </section>
         </div>
 
+        {SHOW_PRICING ? (
         <div className="space-y-5">
           <section className="jl-card p-5">
             <p className="eyebrow">This month</p>
@@ -1022,15 +850,8 @@ export default function ResumePage() {
               </Button>
             ) : null}
           </section>
-
-          <TailorHistoryCard
-            onOpen={(run) => {
-              setTailorResult(run);
-              setScoreResult(null);
-            }}
-          />
-          <HistoryCard />
         </div>
+        ) : null}
       </div>
     </AppShell>
   );

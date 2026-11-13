@@ -5,18 +5,20 @@ import { authClient } from "../lib/auth";
 import { Button } from "./ui/button";
 import { Lockmark } from "./lockmark";
 import { cn } from "@/lib/utils";
+import { NO_AUTH, SHOW_PRICING } from "../lib/flags";
 
 const LINKS = [
   { href: "/board", label: "Job board" },
   { href: "/pricing", label: "Pricing" },
   { href: "/#features", label: "How it works" },
   { href: "/#faq", label: "FAQ" },
-];
+].filter((link) => SHOW_PRICING || link.href !== "/pricing");
 
 export function SiteHeader({ variant = "onLight" }: { variant?: "onLight" | "onSky" }) {
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
-  const { data: session } = authClient.useSession();
+  const { data: realSession } = authClient.useSession();
+  const session = NO_AUTH || realSession;
   const [location] = useLocation();
 
   useEffect(() => {
@@ -68,9 +70,11 @@ export function SiteHeader({ variant = "onLight" }: { variant?: "onLight" | "onS
               <Button asChild variant="ghost" className="rounded-[10px] font-semibold">
                 <Link to="/auth">Sign in</Link>
               </Button>
-              <Button asChild className="rounded-[10px] font-semibold">
-                <Link to="/auth?mode=signup">Start free</Link>
-              </Button>
+              {SHOW_PRICING ? (
+                <Button asChild className="rounded-[10px] font-semibold">
+                  <Link to="/auth?mode=signup">Start free</Link>
+                </Button>
+              ) : null}
             </>
           )}
         </div>
@@ -108,9 +112,11 @@ export function SiteHeader({ variant = "onLight" }: { variant?: "onLight" | "onS
                   <Button asChild variant="outline" className="flex-1 rounded-[10px]">
                     <Link to="/auth">Sign in</Link>
                   </Button>
-                  <Button asChild className="flex-1 rounded-[10px]">
-                    <Link to="/auth?mode=signup">Start free</Link>
-                  </Button>
+                  {SHOW_PRICING ? (
+                    <Button asChild className="flex-1 rounded-[10px]">
+                      <Link to="/auth?mode=signup">Start free</Link>
+                    </Button>
+                  ) : null}
                 </>
               )}
             </div>
@@ -155,26 +161,32 @@ export function SiteFooter() {
                     Resume tools
                   </Link>
                 </li>
-                <li>
-                  <Link to="/pricing" className="transition hover:text-white">
-                    Pricing
-                  </Link>
-                </li>
+                {SHOW_PRICING ? (
+                  <li>
+                    <Link to="/pricing" className="transition hover:text-white">
+                      Pricing
+                    </Link>
+                  </li>
+                ) : null}
               </ul>
             </div>
             <div>
               <p className="eyebrow text-white/45">Get started</p>
               <ul className="mt-3 space-y-2 text-[13.5px] text-white/70">
-                <li>
-                  <Link to="/auth?mode=signup" className="transition hover:text-white">
-                    Create account
-                  </Link>
-                </li>
-                <li>
-                  <Link to="/auth" className="transition hover:text-white">
-                    Sign in
-                  </Link>
-                </li>
+                {NO_AUTH ? null : (
+                  <>
+                    <li>
+                      <Link to="/auth?mode=signup" className="transition hover:text-white">
+                        Create account
+                      </Link>
+                    </li>
+                    <li>
+                      <Link to="/auth" className="transition hover:text-white">
+                        Sign in
+                      </Link>
+                    </li>
+                  </>
+                )}
                 <li>
                   <Link to="/#faq" className="transition hover:text-white">
                     FAQ

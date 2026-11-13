@@ -18,6 +18,7 @@ import { Badge } from "../components/ui/badge";
 import { useJobStats, useCompanies } from "../queries/jobs";
 import { compactNumber, initials, markColor, relativeTime } from "../lib/format";
 import { cn } from "@/lib/utils";
+import { NO_AUTH, SHOW_PRICING } from "../lib/flags";
 
 const ROTATING = ["new grad", "junior SWE", "summer 2027", "backend", "first job"];
 
@@ -214,7 +215,7 @@ const FAQ = [
     q: "Can I cancel?",
     a: "Yes, any time, from the billing portal. Paid limits drop back to the free tier at the end of the period and your tracker data stays put.",
   },
-];
+].filter((item) => SHOW_PRICING || !/plan|cancel/i.test(item.q));
 
 function FaqItem({ q, a }: { q: string; a: string }) {
   const [open, setOpen] = useState(false);
@@ -285,16 +286,18 @@ export default function IndexPage() {
               transition={{ duration: 0.55 }}
               className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row"
             >
-              <Button
-                asChild
-                size="lg"
-                className="h-12 w-full rounded-[10px] px-7 text-[15px] font-semibold shadow-[0_8px_24px_-10px_rgba(29,78,216,0.8)] sm:w-auto"
-              >
-                <Link to="/auth?mode=signup">
-                  Start free — no card
-                  <ArrowRight className="size-4" />
-                </Link>
-              </Button>
+              {SHOW_PRICING ? (
+                <Button
+                  asChild
+                  size="lg"
+                  className="h-12 w-full rounded-[10px] px-7 text-[15px] font-semibold shadow-[0_8px_24px_-10px_rgba(29,78,216,0.8)] sm:w-auto"
+                >
+                  <Link to="/auth?mode=signup">
+                    Start free — no card
+                    <ArrowRight className="size-4" />
+                  </Link>
+                </Button>
+              ) : null}
               <Button
                 asChild
                 size="lg"
@@ -484,16 +487,17 @@ export default function IndexPage() {
             Stop scrolling LinkedIn. Start applying.
           </h2>
           <p className="mx-auto mt-4 max-w-lg text-[15.5px] leading-relaxed text-white/80">
-            Free forever for 50 applications, 3 resume scores a month and the full board. No card,
-            no trial timer.
+            {SHOW_PRICING
+              ? "Free forever for 50 applications, 3 resume scores a month and the full board. No card, no trial timer."
+              : "One board for every new-grad role, one tracker for every application, and a resume tailored to each."}
           </p>
           <Button
             asChild
             size="lg"
             className="mt-7 h-12 rounded-[10px] bg-white px-8 text-[15px] font-semibold text-primary hover:bg-white/90"
           >
-            <Link to="/auth?mode=signup">
-              Create your account
+            <Link to={NO_AUTH ? "/board" : "/auth?mode=signup"}>
+              {NO_AUTH ? "Open the board" : "Create your account"}
               <ArrowRight className="size-4" />
             </Link>
           </Button>

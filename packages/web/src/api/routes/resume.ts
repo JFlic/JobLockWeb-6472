@@ -1,14 +1,12 @@
 import { z } from "zod";
 import { and, desc, eq } from "drizzle-orm";
 import { ORPCError } from "@orpc/server";
-import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { generateObject } from "ai";
 import dedent from "dedent";
 import { authed } from "../middleware/auth";
 import { db } from "../database";
 import * as schema from "../database/schema";
-import { s3 } from "../lib/s3";
+import { downloadUrl, readObject, uploadUrl } from "../lib/s3";
 import { gateway, RESUME_MODEL } from "../agent/gateway";
 import { FEATURES, featureBalance, requireFeature, trackFeature } from "../lib/billing";
 import {
@@ -120,11 +118,6 @@ async function loadBank(userId: string) {
   return row?.content ?? "";
 }
 
-async function readObject(key: string) {
-  const object = await s3.send(new GetObjectCommand({ Bucket: process.env.S3_BUCKET, Key: key }));
-  return object.Body!.transformToByteArray();
-}
-
 async function extractPdfText(bytes: Uint8Array) {
   const { extractText, getDocumentProxy } = await import("unpdf");
   const pdf = await getDocumentProxy(new Uint8Array(bytes));
@@ -223,15 +216,7 @@ export const resume = {
       }
       const safe = input.filename.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80);
       const key = `resumes/${context.user.id}/${Date.now()}-${safe}`;
-      const url = await getSignedUrl(
-        s3,
-        new PutObjectCommand({
-          Bucket: process.env.S3_BUCKET,
-          Key: key,
-          ContentType: input.contentType,
-        }),
-        { expiresIn: 600 },
-      );
+      const url = await uploadUrl(key, input.contentType);
       return { url, key };
     }),
 
@@ -302,12 +287,7 @@ export const resume = {
       .from(schema.resumes)
       .where(and(eq(schema.resumes.id, input.id), eq(schema.resumes.userId, context.user.id)));
     if (!row) throw new ORPCError("NOT_FOUND", { message: "Resume not found." });
-    const url = await getSignedUrl(
-      s3,
-      new GetObjectCommand({ Bucket: process.env.S3_BUCKET, Key: row.fileKey }),
-      { expiresIn: 3600 },
-    );
-    return { url };
+    return { url: await downloadUrl(row.fileKey) };
   }),
 
   /** AI match score against one job. Metered. */

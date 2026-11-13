@@ -5,6 +5,7 @@ import { authClient } from "../lib/auth";
 import { useUsage, formatBalance } from "../queries/billing";
 import { Lockmark } from "./lockmark";
 import { cn } from "@/lib/utils";
+import { NO_AUTH, SHOW_PRICING } from "../lib/flags";
 
 const NAV = [
   { href: "/board", label: "Job board", icon: LayoutGrid },
@@ -96,7 +97,7 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
           <p className="eyebrow mb-2 px-3 text-sidebar-foreground/55">Workspace</p>
           <NavLinks onNavigate={onNavigate} />
         </div>
-        <UsageCard />
+        {SHOW_PRICING ? <UsageCard /> : null}
       </div>
 
       <div className="border-t border-sidebar-border pt-3">
@@ -106,13 +107,14 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
           </div>
           <div className="min-w-0">
             <p className="truncate text-[13px] font-medium text-white">
-              {session?.user?.name || "Signed in"}
+              {NO_AUTH ? "Local mode" : session?.user?.name || "Signed in"}
             </p>
             <p className="truncate text-[11.5px] text-sidebar-foreground/70">
               {session?.user?.email}
             </p>
           </div>
         </div>
+        {NO_AUTH ? null : (
         <button
           type="button"
           onClick={() => {
@@ -125,6 +127,7 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
           <LogOut className="size-4" />
           Sign out
         </button>
+        )}
       </div>
     </div>
   );

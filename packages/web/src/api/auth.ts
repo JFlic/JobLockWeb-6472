@@ -18,10 +18,13 @@ export const auth = betterAuth({
     return origin ? [origin] : ["*"];
   },
   plugins: [
-    ...runableManagedAuth({
-      applicationId: process.env.APPLICATION_ID!,
-      issuer: process.env.VITE_RUNABLE_AUTH_ISSUER!,
-    }),
+    // Managed Google sign-in only exists on Runable; local dev uses email/password.
+    ...(process.env.VITE_RUNABLE_AUTH_ISSUER
+      ? runableManagedAuth({
+          applicationId: process.env.APPLICATION_ID!,
+          issuer: process.env.VITE_RUNABLE_AUTH_ISSUER,
+        })
+      : []),
     autumn(),
   ],
   databaseHooks: {

@@ -16,10 +16,6 @@ export function useCurrentResume(enabled = true) {
   return useQuery(orpc.resume.current.queryOptions({ enabled, staleTime: 30_000 }));
 }
 
-export function useResumeHistory(enabled = true) {
-  return useQuery(orpc.resume.history.queryOptions({ enabled, staleTime: 30_000 }));
-}
-
 /**
  * Full upload flow: presign -> PUT straight to storage -> register so the
  * server pulls it back and extracts the text.
@@ -78,10 +74,6 @@ export function useTailorResume() {
       },
     }),
   );
-}
-
-export function useTailorHistory(enabled = true) {
-  return useQuery(orpc.resume.tailorHistory.queryOptions({ enabled, staleTime: 30_000 }));
 }
 
 export function useSaveTailor() {
