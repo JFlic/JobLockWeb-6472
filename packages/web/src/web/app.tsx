@@ -7,7 +7,7 @@ import TrackerPage from "./pages/tracker";
 import ResumePage from "./pages/resume";
 import { Provider } from "./components/provider";
 import { ProtectedRoute } from "./components/protected-route";
-import { AgentFeedback, RunableBadge } from "@runablehq/website-runtime";
+import { AgentFeedback } from "@runablehq/website-runtime";
 import { NO_AUTH, SHOW_PRICING } from "./lib/flags";
 
 function App() {
@@ -35,8 +35,6 @@ function App() {
       </Switch>
       {/* Do not remove — off by default, activated by parent iframe via postMessage */}
       {import.meta.env.DEV && <AgentFeedback />}
-      {/* "Made with Runable" badge - if user asks to remove the runable badge, remove this code as well as comment */}
-      {<RunableBadge />}
     </Provider>
   );
 }

@@ -9,7 +9,7 @@ import { ErrorNote, Spinner } from "../components/ui/feedback";
 import { Lockmark } from "../components/lockmark";
 import { useJobStats } from "../queries/jobs";
 import { cn } from "@/lib/utils";
-import { SHOW_PRICING } from "../lib/flags";
+import { GOOGLE_SIGN_IN, SHOW_PRICING } from "../lib/flags";
 
 type Mode = "signin" | "signup";
 
@@ -113,24 +113,30 @@ export default function AuthPage() {
             ))}
           </div>
 
-          <Button
-            type="button"
-            variant="outline"
-            onClick={google}
-            disabled={busy !== null}
-            className="mt-5 h-11 w-full rounded-[10px] text-[14.5px] font-semibold"
-          >
-            {busy === "google" ? <Spinner /> : <FcGoogle className="size-[18px]" />}
-            Continue with Google
-          </Button>
+          {GOOGLE_SIGN_IN ? (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={google}
+                disabled={busy !== null}
+                className="mt-5 h-11 w-full rounded-[10px] text-[14.5px] font-semibold"
+              >
+                {busy === "google" ? <Spinner /> : <FcGoogle className="size-[18px]" />}
+                Continue with Google
+              </Button>
 
-          <div className="my-5 flex items-center gap-3">
-            <span className="h-px flex-1 bg-border" />
-            <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground">
-              or email
-            </span>
-            <span className="h-px flex-1 bg-border" />
-          </div>
+              <div className="my-5 flex items-center gap-3">
+                <span className="h-px flex-1 bg-border" />
+                <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground">
+                  or email
+                </span>
+                <span className="h-px flex-1 bg-border" />
+              </div>
+            </>
+          ) : (
+            <div className="mt-5" />
+          )}
 
           <form onSubmit={submit} className="space-y-4">
             {mode === "signup" ? (
