@@ -444,7 +444,7 @@ export default function TrackerPage() {
           <div className="flex flex-wrap items-center gap-3 rounded-[12px] border border-amber/30 bg-amber/8 px-4 py-3">
             <Sparkles className="size-4 shrink-0 text-amber" />
             <p className="flex-1 text-[13.5px] text-foreground">
-              {usage.data?.trackerSlots.remaining ?? 0} tracker slots left on the free plan. Pro
+              {usage.data?.trackerSlots?.remaining ?? 0} tracker slots left on the free plan. Pro
               lifts the cap entirely.
             </p>
             <Button asChild size="sm" className="rounded-[9px] font-semibold">

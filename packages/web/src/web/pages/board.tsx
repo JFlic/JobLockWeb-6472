@@ -242,7 +242,9 @@ export default function BoardPage() {
         </div>
 
         {/* Free-plan nudge */}
-        {SHOW_PRICING && usage.data && !usage.data.resumeScore.unlimited && usage.data.resumeScore.remaining <= 0 ? (
+        {/* A balance is null whenever billing can't answer (no Autumn key, outage),
+            and reading through it here blanked the whole board for every user. */}
+        {SHOW_PRICING && usage.data?.resumeScore && !usage.data.resumeScore.unlimited && usage.data.resumeScore.remaining <= 0 ? (
           <div className="flex flex-wrap items-center gap-3 rounded-[12px] border border-amber/30 bg-amber/8 px-4 py-3">
             <Sparkles className="size-4 shrink-0 text-amber" />
             <p className="flex-1 text-[13.5px] text-foreground">

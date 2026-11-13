@@ -1,4 +1,4 @@
-import { Redirect, Route, Switch } from "wouter";
+import { Link, Redirect, Route, Switch } from "wouter";
 import Index from "./pages/index";
 import AuthPage from "./pages/auth";
 import PricingPage from "./pages/pricing";
@@ -31,6 +31,16 @@ function App() {
           <ProtectedRoute>
             <ResumePage />
           </ProtectedRoute>
+        </Route>
+        {/* Without a fallback, a mistyped or stale link rendered an empty white page. */}
+        <Route>
+          <div className="flex min-h-screen flex-col items-center justify-center gap-3 px-6 text-center">
+            <h1 className="text-2xl font-semibold">Page not found</h1>
+            <p className="text-muted-foreground">That link doesn't go anywhere.</p>
+            <Link href="/" className="font-semibold text-primary underline-offset-4 hover:underline">
+              Back to Job Lock
+            </Link>
+          </div>
         </Route>
       </Switch>
       {/* Do not remove — off by default, activated by parent iframe via postMessage */}

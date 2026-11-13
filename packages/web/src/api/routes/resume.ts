@@ -7,7 +7,7 @@ import { authed } from "../middleware/auth";
 import { db } from "../database";
 import * as schema from "../database/schema";
 import { downloadUrl, readObject, uploadUrl } from "../lib/s3";
-import { gateway, RESUME_MODEL } from "../agent/gateway";
+import { gateway, RESUME_MODEL, withAi } from "../agent/gateway";
 import { FEATURES, featureBalance, requireFeature, trackFeature } from "../lib/billing";
 import {
   DOCX_TYPE,
@@ -303,7 +303,7 @@ export const resume = {
         loadBank(userId),
       ]);
 
-      const { object } = await generateObject({
+      const { object } = await withAi(() => generateObject({
         model: gateway(RESUME_MODEL),
         schema: scoreSchema,
         system: dedent`
@@ -333,7 +333,7 @@ export const resume = {
 
           ${bankBlock(bank)}
         `,
-      });
+      }));
 
       const result = clampScore(object);
 
@@ -380,7 +380,7 @@ export const resume = {
         loadBank(userId),
       ]);
 
-      const { object } = await generateObject({
+      const { object } = await withAi(() => generateObject({
         model: gateway(RESUME_MODEL),
         schema: tailorSchema,
         system: dedent`
@@ -423,7 +423,7 @@ export const resume = {
 
           ${bankBlock(bank)}
         `,
-      });
+      }));
 
       const result = clampTailor(object);
 
