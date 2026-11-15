@@ -1,6 +1,12 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 export const s3 = new S3Client({
@@ -35,14 +41,70 @@ export async function writeLocalObject(key: string, bytes: Uint8Array) {
   await writeFile(file, bytes);
 }
 
-/** URL the browser PUTs the file to. */
-export async function uploadUrl(key: string, contentType: string) {
+/**
+ * URL the browser PUTs the file to. The byte count is part of the signature, so
+ * the URL only accepts a body of exactly the size the server approved — without
+ * it, one presigned URL could put a file of any size in the bucket.
+ */
+export async function uploadUrl(key: string, contentType: string, size: number) {
   if (LOCAL_STORAGE) return `${LOCAL_ROUTE}${key}`;
   return getSignedUrl(
     s3,
-    new PutObjectCommand({ Bucket: process.env.S3_BUCKET, Key: key, ContentType: contentType }),
-    { expiresIn: 600 },
+    new PutObjectCommand({
+      Bucket: process.env.S3_BUCKET,
+      Key: key,
+      ContentType: contentType,
+      ContentLength: size,
+    }),
+    { expiresIn: 600, signableHeaders: new Set(["content-length", "content-type"]) },
   );
+}
+
+/**
+ * The objects under a prefix with their upload time. Lists what is really in the
+ * bucket, so files that were uploaded but never registered still show up.
+ */
+export async function listObjects(prefix: string): Promise<{ key: string; modified: Date }[]> {
+  if (LOCAL_STORAGE) {
+    const dir = localPath(prefix.replace(/\/$/, ""));
+    if (!dir) return [];
+    try {
+      const names = await readdir(dir);
+      return Promise.all(
+        names.map(async (name) => ({
+          key: `${prefix.replace(/\/$/, "")}/${name}`,
+          modified: (await stat(path.join(dir, name))).mtime,
+        })),
+      );
+    } catch {
+      return [];
+    }
+  }
+  const out: { key: string; modified: Date }[] = [];
+  let token: string | undefined;
+  do {
+    const page = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: process.env.S3_BUCKET,
+        Prefix: prefix,
+        ContinuationToken: token,
+      }),
+    );
+    for (const o of page.Contents ?? []) {
+      if (o.Key) out.push({ key: o.Key, modified: o.LastModified ?? new Date() });
+    }
+    token = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (token);
+  return out;
+}
+
+export async function deleteObject(key: string) {
+  if (LOCAL_STORAGE) {
+    const file = localPath(key);
+    if (file) await rm(file, { force: true });
+    return;
+  }
+  await s3.send(new DeleteObjectCommand({ Bucket: process.env.S3_BUCKET, Key: key }));
 }
 
 /** Short-lived URL the browser can download the file from. */

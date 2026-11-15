@@ -10,6 +10,7 @@ import {
   NotebookPen,
   Search,
   Sparkles,
+  Trash2,
   Upload,
   Wand2,
   X,
@@ -22,11 +23,13 @@ import { ErrorNote, Skeleton, Spinner } from "../components/ui/feedback";
 import { useJobs } from "../queries/jobs";
 import {
   useCurrentResume,
+  useDeleteResume,
   useDownloadResume,
   useExperienceBank,
   useExportCoverLetter,
   useExportResume,
   useExtractDocument,
+  useResumeList,
   useSaveExperienceBank,
   useSaveTailor,
   useScoreResume,
@@ -202,6 +205,84 @@ function JobPicker({
   );
 }
 
+/**
+ * Every saved resume with a delete button. Users are capped at 10 files, and
+ * without this list the only way past the cap would be support. Delete takes a
+ * second click instead of a browser confirm(), because it also removes the
+ * scores and tailoring runs made from that resume.
+ */
+function SavedResumes() {
+  const list = useResumeList();
+  const remove = useDeleteResume();
+  const [confirming, setConfirming] = useState<number | null>(null);
+  const [error, setError] = useState<string | undefined>();
+  const rows = list.data?.resumes ?? [];
+  if (rows.length === 0) return null;
+  const max = list.data?.max ?? 10;
+
+  async function onDelete(id: number) {
+    setError(undefined);
+    try {
+      await remove.mutateAsync({ id });
+      setConfirming(null);
+    } catch (e) {
+      setError((e as Error).message || "Couldn't delete that resume.");
+    }
+  }
+
+  return (
+    <div className="mt-5">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Saved resumes · {rows.length} of {max}
+      </p>
+      {rows.length >= max ? (
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          That's the most you can keep. Delete one to upload another.
+        </p>
+      ) : null}
+      <ul className="mt-2 divide-y divide-border rounded-[12px] border border-border">
+        {rows.map((r) => (
+          <li key={r.id} className="flex flex-wrap items-center gap-3 px-3.5 py-2.5">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm text-foreground">{r.filename}</p>
+              <p className="text-xs text-muted-foreground">{relativeTime(r.createdAt)}</p>
+            </div>
+            {confirming === r.id ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  Also deletes its scores and tailoring runs.
+                </span>
+                <Button variant="ghost" size="sm" onClick={() => setConfirming(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => void onDelete(r.id)}
+                  disabled={remove.isPending}
+                >
+                  {remove.isPending ? <Spinner /> : null}
+                  Delete
+                </Button>
+              </div>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`Delete ${r.filename}`}
+                onClick={() => setConfirming(r.id)}
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {error ? <ErrorNote className="mt-3" message={error} /> : null}
+    </div>
+  );
+}
+
 function UploadCard() {
   const resume = useCurrentResume();
   const upload = useUploadResume();
@@ -309,6 +390,8 @@ function UploadCard() {
       )}
 
       {error ? <ErrorNote className="mt-4" message={error} /> : null}
+
+      <SavedResumes />
 
       <input
         ref={inputRef}

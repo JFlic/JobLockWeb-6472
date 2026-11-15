@@ -28,13 +28,15 @@ export function useUploadResume() {
       if (contentType !== "application/pdf" && contentType !== DOCX_TYPE) {
         throw new Error("Upload a PDF or Word (.docx) file.");
       }
-      if (file.size > 8 * 1024 * 1024) {
-        throw new Error("That file is over 8MB. Export a smaller PDF and try again.");
+      // Mirrors the server's cap so the common case fails before any upload.
+      if (file.size > 5 * 1024 * 1024) {
+        throw new Error("That file is over 5 MB. Export a smaller PDF and try again.");
       }
 
       const { url, key } = await client.resume.presign({
         filename: file.name,
         contentType,
+        size: file.size,
       });
 
       const put = await fetch(url, {
@@ -50,6 +52,22 @@ export function useUploadResume() {
       void queryClient.invalidateQueries({ queryKey: orpc.resume.key() });
     },
   });
+}
+
+export function useResumeList(enabled = true) {
+  return useQuery(orpc.resume.list.queryOptions({ enabled, staleTime: 30_000 }));
+}
+
+/** Deleting a resume also removes its scores and tailoring runs, so refresh all resume data. */
+export function useDeleteResume() {
+  const queryClient = useQueryClient();
+  return useMutation(
+    orpc.resume.remove.mutationOptions({
+      onSuccess: () => {
+        void queryClient.invalidateQueries({ queryKey: orpc.resume.key() });
+      },
+    }),
+  );
 }
 
 export function useScoreResume() {

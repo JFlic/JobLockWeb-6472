@@ -1,12 +1,12 @@
 import { z } from "zod";
-import { and, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq } from "drizzle-orm";
 import { ORPCError } from "@orpc/server";
 import { generateObject } from "ai";
 import dedent from "dedent";
 import { authed } from "../middleware/auth";
 import { db } from "../database";
 import * as schema from "../database/schema";
-import { downloadUrl, readObject, uploadUrl } from "../lib/s3";
+import { deleteObject, listObjects, downloadUrl, readObject, uploadUrl } from "../lib/s3";
 import { withAi } from "../agent/gateway";
 import { FEATURES, featureBalance, requireFeature, trackFeature } from "../lib/billing";
 import {
@@ -25,6 +25,49 @@ const TRUTH_RULE = dedent`
 `;
 
 const UPLOAD_TYPES = ["application/pdf", DOCX_TYPE];
+
+/**
+ * Per-user storage caps, so one account can't fill the bucket. A real resume is
+ * well under 1 MB; 10 files at 5 MB bounds a single user at 50 MB.
+ */
+export const MAX_RESUMES = 10;
+export const MAX_RESUME_BYTES = 5 * 1024 * 1024;
+const FULL_MESSAGE = `You have ${MAX_RESUMES} resumes saved, the most allowed. Delete one to upload another.`;
+const TOO_BIG_MESSAGE = "That file is over 5 MB. Export a smaller PDF and try again.";
+
+/**
+ * Files in the user's folder, after clearing out uploads that never made it to
+ * a saved resume (a dropped connection between upload and register). Those are
+ * invisible in the app, so without this sweep they would fill the cap with
+ * nothing the user could delete. Anything younger than an upload URL's life
+ * may still be mid-upload, so it is left alone.
+ */
+async function storedFileCount(userId: string) {
+  const files = await listObjects(`resumes/${userId}/`);
+  const saved = new Set(
+    (
+      await db
+        .select({ fileKey: schema.resumes.fileKey })
+        .from(schema.resumes)
+        .where(eq(schema.resumes.userId, userId))
+    ).map((r) => r.fileKey),
+  );
+  const staleBefore = Date.now() - 15 * 60_000;
+  let kept = 0;
+  for (const f of files) {
+    if (saved.has(f.key) || f.modified.getTime() > staleBefore) kept++;
+    else await deleteObject(f.key).catch((e) => console.error("[resume] orphan sweep:", e));
+  }
+  return kept;
+}
+
+async function savedResumeCount(userId: string) {
+  const [row] = await db
+    .select({ n: count() })
+    .from(schema.resumes)
+    .where(eq(schema.resumes.userId, userId));
+  return row?.n ?? 0;
+}
 
 /** Either a posting from the board or one the user pasted from elsewhere. */
 const jobInput = {
@@ -138,7 +181,7 @@ async function loadResume(userId: string, resumeId?: number) {
         ? and(eq(schema.resumes.userId, userId), eq(schema.resumes.id, resumeId))
         : eq(schema.resumes.userId, userId),
     )
-    .orderBy(desc(schema.resumes.createdAt))
+    .orderBy(desc(schema.resumes.createdAt), desc(schema.resumes.id))
     .limit(1);
   const resume = rows[0];
   if (!resume) {
@@ -209,14 +252,28 @@ async function loadJobContext(jobId: number): Promise<JobContext> {
 export const resume = {
   /** Presigned PUT so the browser uploads straight to Tigris. */
   presign: authed
-    .input(z.object({ filename: z.string().max(200), contentType: z.string().max(100) }))
+    .input(
+      z.object({
+        filename: z.string().max(200),
+        contentType: z.string().max(100),
+        size: z.number().int().positive(),
+      }),
+    )
     .handler(async ({ input, context }) => {
       if (!UPLOAD_TYPES.includes(input.contentType)) {
         throw new ORPCError("BAD_REQUEST", { message: "Upload a PDF or Word (.docx) file." });
       }
+      if (input.size > MAX_RESUME_BYTES) {
+        throw new ORPCError("BAD_REQUEST", { message: TOO_BIG_MESSAGE });
+      }
+      // The bucket, not the database, is what fills up: a client that takes upload
+      // URLs and never registers still leaves files behind, so count those too.
+      if ((await storedFileCount(context.user.id)) >= MAX_RESUMES) {
+        throw new ORPCError("FORBIDDEN", { message: FULL_MESSAGE });
+      }
       const safe = input.filename.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80);
       const key = `resumes/${context.user.id}/${Date.now()}-${safe}`;
-      const url = await uploadUrl(key, input.contentType);
+      const url = await uploadUrl(key, input.contentType, input.size);
       return { url, key };
     }),
 
@@ -229,6 +286,16 @@ export const resume = {
       }
 
       const bytes = await readObject(input.key);
+      // Several upload URLs taken at once all pass the presign check, and the local
+      // dev store signs no size, so both caps are checked again on the real file.
+      if (bytes.length > MAX_RESUME_BYTES) {
+        await deleteObject(input.key);
+        throw new ORPCError("BAD_REQUEST", { message: TOO_BIG_MESSAGE });
+      }
+      if ((await savedResumeCount(context.user.id)) >= MAX_RESUMES) {
+        await deleteObject(input.key);
+        throw new ORPCError("FORBIDDEN", { message: FULL_MESSAGE });
+      }
       const isDocx = input.key.toLowerCase().endsWith(".docx");
 
       let text = "";
@@ -268,7 +335,7 @@ export const resume = {
       })
       .from(schema.resumes)
       .where(eq(schema.resumes.userId, context.user.id))
-      .orderBy(desc(schema.resumes.createdAt))
+      .orderBy(desc(schema.resumes.createdAt), desc(schema.resumes.id))
       .limit(1);
     if (!row) return null;
     return {
@@ -278,6 +345,50 @@ export const resume = {
       preview: row.characters.slice(0, 600),
       createdAt: row.createdAt,
     };
+  }),
+
+  /** Every resume the user has saved, newest first, and how many more fit. */
+  list: authed.handler(async ({ context }) => {
+    const rows = await db
+      .select({
+        id: schema.resumes.id,
+        filename: schema.resumes.filename,
+        createdAt: schema.resumes.createdAt,
+      })
+      .from(schema.resumes)
+      .where(eq(schema.resumes.userId, context.user.id))
+      .orderBy(desc(schema.resumes.createdAt), desc(schema.resumes.id));
+    return { resumes: rows, max: MAX_RESUMES };
+  }),
+
+  /**
+   * Deletes a resume, its stored file, and the scores and tailoring runs made
+   * from it (they point at the resume and cannot be exported without it). Done
+   * explicitly rather than trusting the foreign-key cascade, which SQLite only
+   * applies when the connection has foreign keys switched on.
+   */
+  remove: authed.input(z.object({ id: z.number().int() })).handler(async ({ input, context }) => {
+    const userId = context.user.id;
+    const [row] = await db
+      .select({ id: schema.resumes.id, fileKey: schema.resumes.fileKey })
+      .from(schema.resumes)
+      .where(and(eq(schema.resumes.id, input.id), eq(schema.resumes.userId, userId)));
+    if (!row) throw new ORPCError("NOT_FOUND", { message: "Resume not found." });
+
+    await db
+      .delete(schema.resumeScores)
+      .where(and(eq(schema.resumeScores.resumeId, row.id), eq(schema.resumeScores.userId, userId)));
+    await db
+      .delete(schema.resumeTailors)
+      .where(and(eq(schema.resumeTailors.resumeId, row.id), eq(schema.resumeTailors.userId, userId)));
+    await db.delete(schema.resumes).where(eq(schema.resumes.id, row.id));
+    try {
+      await deleteObject(row.fileKey);
+    } catch (e) {
+      // The row is gone either way; a file left behind only counts against the cap.
+      console.error("[resume] file delete failed:", e);
+    }
+    return { ok: true };
   }),
 
   /** Signed download link for the stored PDF. */
