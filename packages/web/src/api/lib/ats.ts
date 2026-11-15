@@ -9,11 +9,19 @@ export interface RawPosting {
   title: string;
   location: string | null;
   applyUrl: string;
-  descriptionText: string;
+  /**
+   * Plain-text description, or null when the board's listing doesn't carry it.
+   * Greenhouse lists jobs without content; `fetchDescriptions` fills it in, so
+   * a sync only downloads full descriptions for boards where something changed.
+   */
+  descriptionText: string | null;
   postedAt: Date | null;
 }
 
-const UA = "JobLockBot/1.0 (+https://joblock.app)";
+/** A board that answered 404: the company left that ATS or renamed its slug. */
+export class BoardGoneError extends Error {}
+
+const UA = "JobLockBot/1.0 (+https://jobs.thejoblockapp.com)";
 
 const ENTITIES: Record<string, string> = {
   "&nbsp;": " ",
@@ -61,12 +69,20 @@ function stripHtml(html: string): string {
 }
 
 async function getJson(url: string): Promise<unknown> {
-  const res = await fetch(url, {
-    headers: { accept: "application/json", "user-agent": UA },
-    signal: AbortSignal.timeout(20000),
-  });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${url}`);
-  return res.json();
+  // Greenhouse answers a burst of requests with 403 (not 429) for a while,
+  // so both count as "slow down". A real 404 is final.
+  for (let attempt = 0; ; attempt += 1) {
+    const res = await fetch(url, {
+      headers: { accept: "application/json", "user-agent": UA },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (res.status === 404) throw new BoardGoneError(`404 for ${url}`);
+    if (res.ok) return res.json();
+    const throttled = res.status === 403 || res.status === 429 || res.status >= 500;
+    if (!throttled || attempt >= 2) throw new Error(`${res.status} ${res.statusText} for ${url}`);
+    await res.body?.cancel();
+    await new Promise((r) => setTimeout(r, 5_000 * 3 ** attempt));
+  }
 }
 
 function asRecord(v: unknown): Record<string, unknown> {
@@ -78,11 +94,7 @@ function str(v: unknown): string | null {
 }
 
 /** Greenhouse — boards-api.greenhouse.io */
-async function fetchGreenhouse(slug: string): Promise<RawPosting[]> {
-  const data = asRecord(
-    await getJson(`https://boards-api.greenhouse.io/v1/boards/${slug}/jobs?content=true`),
-  );
-  const list = Array.isArray(data.jobs) ? data.jobs : [];
+function greenhousePostings(slug: string, list: unknown[], withContent: boolean): RawPosting[] {
   return list.flatMap((entry) => {
     const j = asRecord(entry);
     const id = j.id ?? j.internal_job_id;
@@ -98,11 +110,23 @@ async function fetchGreenhouse(slug: string): Promise<RawPosting[]> {
         title,
         location: location || null,
         applyUrl,
-        descriptionText: stripHtml(typeof j.content === "string" ? j.content : ""),
+        descriptionText: withContent
+          ? stripHtml(typeof j.content === "string" ? j.content : "")
+          : null,
         postedAt: updated ? new Date(updated) : null,
       },
     ];
   });
+}
+
+async function fetchGreenhouse(slug: string, withContent: boolean): Promise<RawPosting[]> {
+  // Without content the listing is a few KB; with it, a large board is tens of MB.
+  const data = asRecord(
+    await getJson(
+      `https://boards-api.greenhouse.io/v1/boards/${slug}/jobs${withContent ? "?content=true" : ""}`,
+    ),
+  );
+  return greenhousePostings(slug, Array.isArray(data.jobs) ? data.jobs : [], withContent);
 }
 
 /** Lever — api.lever.co */
@@ -166,10 +190,11 @@ async function fetchAshby(slug: string): Promise<RawPosting[]> {
   });
 }
 
+/** A board's postings. Greenhouse ones come back without descriptions. */
 export async function fetchBoard(atsType: string, slug: string): Promise<RawPosting[]> {
   switch (atsType) {
     case "greenhouse":
-      return fetchGreenhouse(slug);
+      return fetchGreenhouse(slug, false);
     case "lever":
       return fetchLever(slug);
     case "ashby":
@@ -179,10 +204,18 @@ export async function fetchBoard(atsType: string, slug: string): Promise<RawPost
   }
 }
 
+/** Descriptions by sourceId, for boards whose listing left them out. */
+export async function fetchDescriptions(atsType: string, slug: string): Promise<Map<string, string>> {
+  const postings = atsType === "greenhouse" ? await fetchGreenhouse(slug, true) : await fetchBoard(atsType, slug);
+  return new Map(postings.map((p) => [p.sourceId, p.descriptionText ?? ""]));
+}
+
 /* ---------------------------------- tagging --------------------------------- */
 
 const SENIOR_MARKERS = [
   "senior",
+  "sr.",
+  " sr ",
   "staff",
   "principal",
   "lead ",
@@ -197,29 +230,43 @@ const SENIOR_MARKERS = [
   "fellow",
 ];
 
+/**
+ * Title words that make a posting a software role. Bare "engineer" is not one
+ * of them: with ~10k boards it pulled in test, launch, mechanical and
+ * manufacturing engineers by the hundred.
+ */
 const SWE_MARKERS = [
   "software",
-  "engineer",
-  "engineering",
   "developer",
   "programmer",
   "sde",
   "swe",
   "full stack",
+  "full-stack",
   "fullstack",
   "backend",
   "back end",
+  "back-end",
   "frontend",
   "front end",
+  "front-end",
+  "web engineer",
   "machine learning",
+  "ml engineer",
+  "ai engineer",
   "data engineer",
-  "infrastructure",
+  "infrastructure engineer",
   "platform engineer",
+  "cloud engineer",
+  "devops",
   "site reliability",
+  "sre",
   "security engineer",
   "mobile engineer",
-  "ios engineer",
-  "android engineer",
+  "ios",
+  "android",
+  "product engineer",
+  "forward deployed",
   "computer sci",
 ];
 
@@ -241,7 +288,9 @@ const NEW_GRAD_MARKERS = [
   "class of 20",
   "recent graduate",
 ];
-const JUNIOR_MARKERS = ["junior", "jr.", "jr ", "associate", "engineer i", "engineer 1", "level 1"];
+// Trailing spaces matter: "engineer i" alone also matches "Engineer II".
+// The title is padded with a space at each end before matching.
+const JUNIOR_MARKERS = ["junior", "jr.", "jr ", "associate", "engineer i ", "engineer 1 ", "level 1 ", "developer i ", "developer 1 "];
 
 const VISA_MARKERS = [
   "visa sponsor",
@@ -265,17 +314,28 @@ function has(haystack: string, needles: string[]): boolean {
 
 /** Is this even a software/technical role we care about? */
 export function isSoftwareRole(title: string): boolean {
-  return has(title.toLowerCase(), SWE_MARKERS);
+  // Word-bounded, so "sre" doesn't match "Sresearch" and "ios" not "Biostatistics".
+  const t = ` ${title.toLowerCase().replace(/[^a-z0-9+#.]+/g, " ")} `;
+  return SWE_MARKERS.some((m) => t.includes(` ${m.replace(/-/g, " ")} `) || t.includes(` ${m.replace(/-/g, " ")}s `));
 }
 
-export function classifyLevel(title: string, description: string): Level {
+/**
+ * The level the title alone settles, or null when the title is neutral
+ * ("Software Engineer") and only the description can tell.
+ */
+export function levelFromTitle(title: string): Level | null {
   const t = ` ${title.toLowerCase()} `;
-  const d = description.toLowerCase().slice(0, 4000);
-
   if (has(t, INTERN_MARKERS)) return "intern";
   if (has(t, SENIOR_MARKERS)) return "other";
   if (has(t, NEW_GRAD_MARKERS)) return "new_grad";
   if (has(t, JUNIOR_MARKERS)) return "junior";
+  return null;
+}
+
+export function classifyLevel(title: string, description: string): Level {
+  const fromTitle = levelFromTitle(title);
+  if (fromTitle) return fromTitle;
+  const d = description.toLowerCase().slice(0, 4000);
 
   // Title is neutral (e.g. "Software Engineer") — look for signals in the body.
   if (has(d, ["new grad", "new graduate", "university graduate", "recent graduate", "class of 20"]))

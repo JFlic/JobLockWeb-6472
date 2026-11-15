@@ -58,8 +58,14 @@ export const jobs = sqliteTable(
   (t) => [
     uniqueIndex("jobs_source_id_idx").on(t.sourceId),
     index("jobs_level_idx").on(t.level),
+    // The board's default view walks this newest-first and stops after a page.
+    // There is deliberately no closed_at index: SQLite preferred it for
+    // "closed_at is null", which matches nearly every row, and then sorted
+    // every open job to show 24. tools/sync-jobs.ts drops it in production.
     index("jobs_posted_at_idx").on(t.postedAt),
-    index("jobs_closed_at_idx").on(t.closedAt),
+    // The sync and the company list look jobs up per company; without this
+    // each lookup is a full table scan, and there are ~10k companies.
+    index("jobs_company_idx").on(t.companyId, t.closedAt),
   ],
 );
 

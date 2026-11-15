@@ -13,18 +13,26 @@ export type RefreshOutcome =
   | { ok: false; busy: true }
   | { ok: false; busy: false; error: string };
 
+// The Vercel function may run 300s. Stop starting boards well before that;
+// the least recently synced go first, so successive runs cover everything.
+const HTTP_BUDGET_MS = 240_000;
+
 /** Run one job pull. Never throws, and never runs two pulls at once. */
 export async function runRefreshOnce(source: "schedule" | "http"): Promise<RefreshOutcome> {
   if (shared.__jobRefreshRunning) return { ok: false, busy: true };
   shared.__jobRefreshRunning = true;
   const started = Date.now();
   try {
-    const result = await refreshJobs({});
+    const result = await refreshJobs({
+      concurrency: 6,
+      deadline: source === "http" ? started + HTTP_BUDGET_MS : undefined,
+    });
     const durationMs = Date.now() - started;
     console.log(
       `[jobs] refresh (${source}) done in ${Math.round(durationMs / 1000)}s: ` +
         `${result.companies} companies, +${result.inserted} new, ${result.updated} updated, ` +
-        `${result.closed} closed, ${result.skipped} skipped, ${result.errors.length} errors`,
+        `${result.closed} closed, ${result.gone} gone, ${result.deferred} deferred, ` +
+        `${result.errors.length} errors`,
     );
     for (const e of result.errors) console.warn(`[jobs]   ${e.company}: ${e.error}`);
     return { ok: true, result, durationMs };
@@ -52,9 +60,10 @@ export function startJobScheduler() {
   if (shared.__jobSchedulerStarted) return;
   if (process.env.JOB_REFRESH_ENABLED === "false") return;
   // Serverless instances freeze between requests, so a timer here would fire
-  // at random inside some unrelated invocation. On Vercel the hourly pull comes
-  // from .github/workflows/sync-jobs.yml (Hobby crons run at most daily), with
-  // the daily Vercel cron as a backup; both call /api/cron/refresh-jobs.
+  // at random inside some unrelated invocation. On Vercel the hourly pull is
+  // .github/workflows/sync-jobs.yml running tools/sync-jobs.ts against the
+  // database directly; the daily Vercel cron (/api/cron/refresh-jobs) is a
+  // time-boxed backup.
   if (process.env.VERCEL) return;
   shared.__jobSchedulerStarted = true;
 

@@ -57,7 +57,7 @@ await writeFile(
     handler: "index.mjs",
     launcherType: "Nodejs",
     supportsResponseStreaming: true,
-    // The cron job pull takes ~30s against 48 companies; leave headroom.
+    // The daily backup job pull stops starting boards at 240s (job-scheduler.ts).
     maxDuration: 300,
   }),
 );
