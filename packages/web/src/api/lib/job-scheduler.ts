@@ -52,7 +52,9 @@ export function startJobScheduler() {
   if (shared.__jobSchedulerStarted) return;
   if (process.env.JOB_REFRESH_ENABLED === "false") return;
   // Serverless instances freeze between requests, so a timer here would fire
-  // at random inside some unrelated invocation. Vercel Cron drives it instead.
+  // at random inside some unrelated invocation. On Vercel the hourly pull comes
+  // from .github/workflows/sync-jobs.yml (Hobby crons run at most daily), with
+  // the daily Vercel cron as a backup; both call /api/cron/refresh-jobs.
   if (process.env.VERCEL) return;
   shared.__jobSchedulerStarted = true;
 

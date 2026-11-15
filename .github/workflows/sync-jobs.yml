@@ -1,0 +1,55 @@
+# Hourly job-board sync.
+#
+# Vercel's Hobby plan runs a cron at most once a day, so the hourly pull is
+# triggered from here instead: this calls the same endpoint Vercel Cron does
+# (/api/cron/refresh-jobs), which does the whole sync inside the deployed app.
+# The daily Vercel cron (12:00 UTC) stays on as a backup.
+#
+# Needs the repo secret CRON_SECRET, equal to CRON_SECRET in Vercel.
+#
+# Minute 17, not 0: GitHub delays or drops scheduled runs most at the top of the
+# hour, and it keeps clear of the 12:00 Vercel run.
+#
+# GitHub turns scheduled workflows off after 60 days with no commits to the
+# repo; re-enable it from the Actions tab if syncs stop.
+name: Sync job board
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: sync-jobs
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - name: Trigger sync
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::Repo secret CRON_SECRET is not set."
+            exit 1
+          fi
+          # The function may run up to 300s; give it room, and retry once on a
+          # network blip. The secret goes in a header file so it never reaches argv.
+          umask 077
+          printf 'Authorization: Bearer %s\n' "$CRON_SECRET" > "$RUNNER_TEMP/auth.hdr"
+          code=$(curl -sS -o body.json -w '%{http_code}' --max-time 330 --retry 1 --retry-delay 20 \
+            -X POST -H @"$RUNNER_TEMP/auth.hdr" \
+            https://jobs.thejoblockapp.com/api/cron/refresh-jobs || echo 000)
+          rm -f "$RUNNER_TEMP/auth.hdr"
+          echo "HTTP $code"
+          cat body.json 2>/dev/null; echo
+          # 409: a sync is already running (e.g. the daily Vercel one). Not a failure.
+          case "$code" in
+            200|409) exit 0 ;;
+            *) echo "::error::Sync failed with HTTP $code"; exit 1 ;;
+          esac
