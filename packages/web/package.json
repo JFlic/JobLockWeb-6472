@@ -1,5 +1,6 @@
 {
   "name": "@template/web",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "exports": {

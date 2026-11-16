@@ -17,3 +17,7 @@ Deployment tools depend on these command names. Their implementations may change
 The web package owns the API, database, and shared web interface. The mobile package is an Expo client. The desktop package is an Electron shell around the web app. Services use the fixed ports defined in `__ports.cjs`, and the web health endpoint is `/api/health`.
 
 Secrets belong in the root `.env` file. Browser values must use the `VITE_` prefix. Commands prefixed with `internal:` are for template maintenance.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Third-party components, including the optional FFmpeg use at build time, are described in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
